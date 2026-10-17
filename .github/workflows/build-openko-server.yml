@@ -1,5 +1,5 @@
 
-name: Build OpenKO Server
+name: Build OpenKO Server Release
 
 on:
   workflow_dispatch:
@@ -17,14 +17,35 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build Server
+      - name: Build Release x64
         shell: cmd
         run: |
-          msbuild Server.slnx /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal
+          msbuild Server.slnx /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
 
-      - name: Upload server files
+      - name: Verify executables
+        shell: pwsh
+        run: |
+          $names = @(
+            "AIServer.exe",
+            "Aujard.exe",
+            "Ebenezer.exe",
+            "ItemManager.exe",
+            "VersionManager.exe"
+          )
+          foreach ($name in $names) {
+            $path = Join-Path "bin/Release-x64" $name
+            if (!(Test-Path $path)) {
+              throw "Missing: $path"
+            }
+          }
+
+      - name: Upload Release Package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenKO-Server-Windows-x64
-          path: bin/Debug-x64/
+          name: OpenKO-Server-Release-x64
+          path: |
+            bin/Release-x64/
+            !bin/Release-x64/*.pdb
+            !bin/Release-x64/*.map
+            !bin/Release-x64/*.lib
           if-no-files-found: error
