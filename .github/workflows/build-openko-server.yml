@@ -1,0 +1,30 @@
+
+name: Build OpenKO Server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Server
+        shell: cmd
+        run: |
+          msbuild Server.slnx /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal
+
+      - name: Upload server files
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenKO-Server-Windows-x64
+          path: bin/Debug-x64/
+          if-no-files-found: error
