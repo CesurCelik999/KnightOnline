@@ -53,10 +53,6 @@ bool OperationMessage::Process(const std::string_view command)
 				Assault();
 				break;
 
-			case "+monsummon"_djb2:
-				MonSummon();
-				break;
-
 			case "+monsummonall"_djb2:
 				MonSummonAll();
 				break;
@@ -73,6 +69,19 @@ bool OperationMessage::Process(const std::string_view command)
 				MonKill();
 				break;
 #endif
+
+			// OpenKO v1453 GM: runtime monster spawn (implemented on AIServer as well).
+			case "+monsummon"_djb2:
+				MonSummon();
+				break;
+
+			// OpenKO GM: notice at the top of every connected player's screen.
+			case "+noticeall"_djb2:
+				NoticeAll();
+				break;
+			case "+noticealloff"_djb2:
+				NoticeAllOff();
+				break;
 
 			case "/open"_djb2:
 			case "+open"_djb2:
@@ -475,7 +484,83 @@ void OperationMessage::Assault()
 
 void OperationMessage::MonSummon()
 {
-	// TODO
+    // +monsummon <K_MONSTER.ID> [count]; no arbitrary monster count cap.
+    // AI will enforce the actual free NPC protocol-ID / memory availability.
+    if (_srcUser == nullptr || _srcUser->m_pUserData == nullptr || GetArgCount() < 1)
+        return;
+    if (_srcUser->m_pUserData->m_bAuthority != AUTHORITY_MANAGER)
+        return;
+    const int monsterId = ParseInt(0);
+    const int count = (GetArgCount() >= 2 ? ParseInt(1) : 1);
+    if (monsterId <= 0 || monsterId > 32767 || count <= 0)
+    {
+        spdlog::warn("MonSummon: invalid monsterId={} count={}", monsterId, count);
+        return;
+    }
+    // Private Ebenezer -> AIServer opcode 14, not sent to a game client.
+    constexpr uint8_t GM_MONSTER_SPAWN_OPCODE = 14;
+    char request[32] {};
+    int index = 0;
+    SetByte(request, GM_MONSTER_SPAWN_OPCODE, index);
+    SetShort(request, static_cast<int16_t>(monsterId), index);
+    SetDWORD(request, count, index);
+    SetShort(request, static_cast<int16_t>(_srcUser->m_pUserData->m_bZone), index);
+    SetFloat(request, _srcUser->m_pUserData->m_curx, index);
+    SetFloat(request, _srcUser->m_pUserData->m_curz, index);
+    _main->Send_AIServer(_srcUser->m_pUserData->m_bZone, request, index);
+    spdlog::info("GM MonSummon requested: gm={} monsterId={} count={} zone={}",
+        _srcUser->m_pUserData->m_id, monsterId, count,
+        _srcUser->m_pUserData->m_bZone);
+}
+
+// OpenKO V3: send the existing 1299 client top-title chat type (9).
+// This uses the regular WIZ_CHAT layout already supported by CGameProcMain::MsgRecv_Chat.
+// Does not modify client assets, the game database, or any persistent notice files.
+void OperationMessage::NoticeAll()
+{
+	if (_srcUser == nullptr || _srcUser->m_pUserData == nullptr || GetArgCount() == 0)
+		return; // Only a GM in the game may issue this command.
+
+	std::string message;
+	for (const std::string& part : _args)
+	{
+		if (!message.empty()) message.push_back(' ');
+		message += part;
+	}
+	if (message.empty() || message.size() > 240)
+	{
+		spdlog::warn("GM NoticeAll: empty or overlong message [bytes={}, max=240, gm={}]",
+			message.size(), _srcUser->m_pUserData->m_id);
+		return;
+	}
+
+	char sendBuffer[512] {};
+	int sendIndex = 0;
+	SetByte(sendBuffer, WIZ_CHAT, sendIndex);
+	SetByte(sendBuffer, 9, sendIndex); // N3_CHAT_TITLE, 1299 client PacketDef.h
+	SetByte(sendBuffer, 1, sendIndex); // nation; top-title applies to everyone
+	SetShort(sendBuffer, -1, sendIndex); // system sender
+	SetByte(sendBuffer, 0, sendIndex); // no sender name
+	SetString2(sendBuffer, message, sendIndex);
+	_main->Send_All(sendBuffer, sendIndex);
+	spdlog::info("GM NoticeAll: gm={} bytes={}",
+		_srcUser->m_pUserData->m_id, message.size());
+}
+
+void OperationMessage::NoticeAllOff()
+{
+	if (_srcUser == nullptr || _srcUser->m_pUserData == nullptr)
+		return;
+	char sendBuffer[32] {};
+	int sendIndex = 0;
+	SetByte(sendBuffer, WIZ_CHAT, sendIndex);
+	SetByte(sendBuffer, 10, sendIndex); // N3_CHAT_TITLE_DELETE
+	SetByte(sendBuffer, 1, sendIndex);
+	SetShort(sendBuffer, -1, sendIndex);
+	SetByte(sendBuffer, 0, sendIndex);
+	SetString2(sendBuffer, "", sendIndex);
+	_main->Send_All(sendBuffer, sendIndex);
+	spdlog::info("GM NoticeAll cleared: gm={}", _srcUser->m_pUserData->m_id);
 }
 
 void OperationMessage::MonSummonAll()

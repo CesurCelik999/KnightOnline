@@ -30,9 +30,14 @@ void CNpcThread::thread_loop()
 	{
 		fTime2 = TimeGet();
 
-		for (int i = 0; i < NPC_NUM; i++)
+        std::vector<CNpc*> gmSnapshot;
+        {
+            std::lock_guard<std::mutex> lock(_gmNpcMutex);
+            gmSnapshot = _gmNpcs;
+        }
+        for (size_t i = 0; i < static_cast<size_t>(NPC_NUM) + gmSnapshot.size(); ++i)
 		{
-			CNpc* pNpc = m_pNpc[i];
+            CNpc* pNpc = (i < NPC_NUM) ? m_pNpc[i] : gmSnapshot[i - NPC_NUM];
 			if (pNpc == nullptr)
 				continue;
 
@@ -138,6 +143,12 @@ void CNpcThread::thread_loop()
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
+}
+
+void CNpcThread::AddGmNpc(CNpc* npc)
+{
+    std::lock_guard<std::mutex> lock(_gmNpcMutex);
+    _gmNpcs.push_back(npc);
 }
 
 CNpcThread::CNpcThread()

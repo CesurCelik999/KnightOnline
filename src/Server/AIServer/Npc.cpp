@@ -1201,12 +1201,12 @@ bool CNpc::SetLive()
 		NpcTypeParser();
 		m_bFirstLive = false;
 
-		++m_pMain->_loadedNpcCount;
+		if (!m_bGmSummoned) ++m_pMain->_loadedNpcCount;
 
 		//TRACE(_T("Npc - SerLive :  cur = %d\n"), m_pMain->_loadedNpcCount);
 
 		// 몬스터 총 수와 초기화한 몬스터의 수가 같다면
-		if (m_pMain->_totalNpcCount == m_pMain->_loadedNpcCount)
+		if (!m_bGmSummoned && m_pMain->_totalNpcCount == m_pMain->_loadedNpcCount)
 		{
 			spdlog::info("Npc::SetLive: All NPCs initialized [count={}]", m_pMain->_totalNpcCount);
 			m_pMain->GameServerAcceptThread(); // 게임서버 Accept

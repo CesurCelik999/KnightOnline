@@ -11,6 +11,8 @@
 #include "Map.h"
 #include "NpcItem.h"
 #include "Npc.h"
+#include "DynamicNpcMap.h"
+#include <mutex>
 
 #include "Extern.h" // 전역 객체
 
@@ -27,7 +29,7 @@ class ZoneEventThread;
 
 using NpcThreadArray            = std::vector<CNpcThread*>;
 using NpcTableMap               = CSTLMap<model::Npc>;
-using NpcMap                    = CSTLMap<CNpc>;
+using NpcMap                    = openko_ext::DynamicNpcMap<CNpc, NPC_BAND>;
 using MagicTableMap             = CSTLMap<model::Magic>;
 using MagicType1TableMap        = CSTLMap<model::MagicType1>;
 using MagicType2TableMap        = CSTLMap<model::MagicType2>;
@@ -65,6 +67,7 @@ public:
 	void GameServerAcceptThread();
 	bool AddObjectEventNpc(_OBJECT_EVENT* pEvent, int zone_number);
 	void AllNpcInfo();
+    int SpawnGmMonsters(int monsterId, int count, int zoneId, float x, float z);
 	CUser* GetUserPtr(int nid);
 	int GetZoneIndex(int zoneId) const;
 	int GetServerNumber(int zoneId) const;
@@ -86,6 +89,9 @@ public:
 	NpcTableMap _monTableMap;
 	NpcTableMap _npcTableMap;
 	NpcThreadArray _npcThreads;
+    std::mutex _gmSummonMutex;
+    int _nextGmSerial = 0;
+    size_t _gmThreadRoundRobin = 0;
 	PartyMap _partyMap;
 	MagicTableMap _magicTableMap;
 	MagicType1TableMap _magicType1TableMap;

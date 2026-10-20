@@ -26,6 +26,8 @@ protected:
 	void Assault();
 	void MonSummon();
 	void MonSummonAll();
+	void NoticeAll();
+	void NoticeAllOff();
 	void UnikMonster();
 	void UserSeekReport();
 	void MonKill();

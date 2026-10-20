@@ -26,6 +26,8 @@
 #include <AIServer/binder/AIServerBinder.h>
 
 #include <cmath>
+#include <algorithm>
+#include <new>
 
 using namespace std::chrono_literals;
 using namespace db;
@@ -581,6 +583,98 @@ bool AIServerApp::GetNpcTableData()
 }
 
 //	Npc Thread 를 만든다.
+// OPENKO MONSUMMON V1: runtime, non-persistent monster creation.
+// Called only from an already connected game-server socket, never from the web client.
+int AIServerApp::SpawnGmMonsters(int monsterId, int count, int zoneId, float x, float z)
+{
+    std::lock_guard<std::mutex> guard(_gmSummonMutex);
+    if (count <= 0 || monsterId <= 0 || monsterId > 32767 ||
+        !std::isfinite(x) || !std::isfinite(z) || !_firstServerFlag || _npcThreads.empty())
+        return 0;
+    if (_serverZoneType != UNIFY_ZONE && GetServerNumber(zoneId) != _serverZoneType)
+        return 0;
+    const auto* monster = _monTableMap.GetData(monsterId);
+    MAP* map = GetMapByID(zoneId);
+    if (monster == nullptr || map == nullptr)
+    {
+        spdlog::warn("MonSummon rejected: monsterId={} zone={} invalid table/map", monsterId, zoneId);
+        return 0;
+    }
+    if (_nextGmSerial == 0) _nextGmSerial = _npcMap.GetHighWaterMark();
+    int created = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        while (_nextGmSerial < NPC_BAND && _npcMap.GetData(_nextGmSerial)) ++_nextGmSerial;
+        if (_nextGmSerial >= NPC_BAND) // Actual 1.298 wire ID range (10000..19999).
+        {
+            spdlog::warn("MonSummon: protocol NPC ID space exhausted, created={}", created);
+            break;
+        }
+        // Pick a nearby walkable tile, rather than allowing SetLive to spin for 500 retries.
+        int sx = -1, sz = -1;
+        for (int offset = 0; offset < 25; ++offset)
+        {
+            int dx = (offset % 5) - 2, dz = (offset / 5) - 2;
+            int cx = static_cast<int>(x) + dx, cz = static_cast<int>(z) + dz;
+            int tx = cx / TILE_SIZE, tz = cz / TILE_SIZE;
+            if (cx < 0 || cz < 0 || tx < 0 || tz < 0 ||
+                tx >= map->m_sizeMap.cx-1 || tz >= map->m_sizeMap.cy-1)
+                continue;
+            if (map->m_pMap[tx][tz].m_sEvent <= 0) continue;
+            sx = cx;
+            sz = cz;
+            break;
+        }
+        if (sx < 0) {
+            spdlog::warn("MonSummon: no walkable tile near {},{} in zone={}", x,z,zoneId);
+            break;
+        }
+        auto* npc = new (std::nothrow) CNpc();
+        if (npc == nullptr) {
+            spdlog::error("MonSummon: NPC allocation failed; created={}", created);
+            break;
+        }
+        npc->m_sNid = static_cast<int16_t>(_nextGmSerial);
+        npc->m_sSid = static_cast<int16_t>(monsterId);
+        npc->m_byMoveType = npc->m_byInitMoveType = 1;
+        npc->m_byBattlePos = 0;
+        npc->m_byDirection = 0;
+        npc->InitPos();
+        npc->Load(monster, true);
+        npc->m_sCurZone = static_cast<int16_t>(zoneId);
+        npc->m_ZoneIndex = static_cast<int16_t>(GetZoneIndex(zoneId));
+        npc->m_fCurX = static_cast<float>(sx);
+        npc->m_fCurZ = static_cast<float>(sz);
+        npc->m_fCurY = 0;
+        npc->m_nInitMinX = npc->m_nInitMaxX = sx;
+        npc->m_nInitMinY = npc->m_nInitMaxY = sz;
+        // A small, valid roaming region allows spawned monsters to move.
+        npc->m_nLimitMinX = std::max(0, sx - 8);
+        npc->m_nLimitMaxX = std::min((map->m_sizeMap.cx - 2) * TILE_SIZE, sx + 8);
+        npc->m_nLimitMinZ = std::max(0, sz - 8);
+        npc->m_nLimitMaxZ = std::min((map->m_sizeMap.cy - 2) * TILE_SIZE, sz + 8);
+        npc->m_sRegenTime = 30000;
+        npc->m_sMaxPathCount = 0;
+        npc->m_byDungeonFamily = 0;
+        npc->m_byRegenType = 2; // Do not respawn after death; no DB writes.
+        npc->m_bGmSummoned = true;
+        npc->Init();
+        if (!_npcMap.PutData(_nextGmSerial, npc)) {
+            delete npc;
+            ++_nextGmSerial;
+            continue;
+        }
+        CNpcThread* worker = _npcThreads[_gmThreadRoundRobin++ % _npcThreads.size()];
+        npc->m_sThreadNumber = worker->m_sThreadNumber;
+        worker->AddGmNpc(npc);
+        ++created;
+        ++_nextGmSerial;
+    }
+    spdlog::info("MonSummon completed: monsterId={} zone={} requested={} created={}",
+                 monsterId, zoneId, count, created);
+    return created;
+}
+
 bool AIServerApp::CreateNpcThread()
 {
 	_totalNpcCount  = 0; // DB에 있는 수
@@ -601,7 +695,7 @@ bool AIServerApp::CreateNpcThread()
 	int nThreadNumber      = 0;
 	CNpcThread* pNpcThread = nullptr;
 
-	for (auto& [_, pNpc] : _npcMap)
+	for (auto& [_, pNpc] : _npcMap.Snapshot())
 	{
 		if (step == 0)
 			pNpcThread = new CNpcThread();
@@ -1024,7 +1118,7 @@ void AIServerApp::AllNpcInfo()
 	// server alive check
 	CNpc* pNpc    = nullptr;
 	int nZone     = 0;
-	int size      = _npcMap.GetSize();
+	int size      = _npcMap.GetHighWaterMark();
 
 	int sendIndex = 0;
 	int count = 0, send_count = 0, send_tot = 0;
