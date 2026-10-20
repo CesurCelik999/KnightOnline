@@ -1208,7 +1208,7 @@ void CGameSocket::RecvBattleEvent(char* pBuf)
 		m_pMain->ResetBattleZone();
 	}
 
-	for (const auto& [_, pNpc] : m_pMain->_npcMap)
+	for (const auto& [_, pNpc] : m_pMain->_npcMap.Snapshot())
 	{
 		if (pNpc == nullptr)
 			continue;

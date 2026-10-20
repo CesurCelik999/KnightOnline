@@ -650,9 +650,9 @@ int AIServerApp::SpawnGmMonsters(int monsterId, int count, int zoneId, float x, 
         npc->m_nInitMinY = npc->m_nInitMaxY = sz;
         // A small, valid roaming region allows spawned monsters to move.
         npc->m_nLimitMinX = std::max(0, sx - 8);
-        npc->m_nLimitMaxX = std::min((map->m_sizeMap.cx - 2) * TILE_SIZE, sx + 8);
+        npc->m_nLimitMaxX = std::min<int>(static_cast<int>((map->m_sizeMap.cx - 2) * TILE_SIZE), sx + 8);
         npc->m_nLimitMinZ = std::max(0, sz - 8);
-        npc->m_nLimitMaxZ = std::min((map->m_sizeMap.cy - 2) * TILE_SIZE, sz + 8);
+        npc->m_nLimitMaxZ = std::min<int>(static_cast<int>((map->m_sizeMap.cy - 2) * TILE_SIZE), sz + 8);
         npc->m_sRegenTime = 30000;
         npc->m_sMaxPathCount = 0;
         npc->m_byDungeonFamily = 0;
