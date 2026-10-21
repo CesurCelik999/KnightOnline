@@ -103,6 +103,8 @@ set(WARFARE_SCENE_INGAME_UI_SOURCES
   UIMsgBoxOkCancel.h
   UINotice.cpp
   UINotice.h
+  UINoticeUp.cpp # OPENKO_NOTICEUP_NATIVE_V1
+  UINoticeUp.h
   UINPCChangeEvent.cpp
   UINPCChangeEvent.h
   UINPCEvent.cpp

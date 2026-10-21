@@ -28,6 +28,7 @@
 #include "UIHelp.h"
 #include "UIMessageWnd.h"
 #include "UINotice.h"
+#include "UINoticeUp.h" // OPENKO_NOTICEUP_NATIVE_V1
 #include "UIDroppedItemDlg.h"
 #include "UIPerTradeDlg.h"
 #include "UIPartyOrForce.h"
@@ -133,6 +134,7 @@ CGameProcMain::CGameProcMain()     // r기본 생성자.. 각 변수의 역활�
 	m_pUIExitMenu           = new CUIExitMenu();
 	m_pUIHelp               = new CUIHelp();
 	m_pUINotice             = new CUINotice();
+	m_pUINoticeUp           = new CUINoticeUp();
 	m_pUIClassChange        = new CUIClassChange();
 	m_pUINpcEvent           = new CUINPCEvent();
 	m_pUIRepairTooltip      = new CUIRepairTooltipDlg();
@@ -185,6 +187,7 @@ CGameProcMain::~CGameProcMain()
 	delete m_pUIExitMenu;
 	delete m_pUIHelp;
 	delete m_pUINotice;
+	delete m_pUINoticeUp;
 	delete m_pUIClassChange;
 	delete m_pUINpcEvent;
 	delete m_pUIDroppedItemDlg;
@@ -249,6 +252,7 @@ void CGameProcMain::ReleaseUIs()
 	m_pUIExitMenu->Release();
 	m_pUIHelp->Release();
 	m_pUINotice->Release();
+	m_pUINoticeUp->Release();
 	m_pUIClassChange->Release();
 	m_pUINpcEvent->Release();
 	m_pUIRepairTooltip->Release();
@@ -1505,6 +1509,9 @@ bool CGameProcMain::ProcessPacket(Packet& pkt)
 			return true;
 		case WIZ_NOTICE:
 			this->MsgRecv_Notice(pkt);
+			return true;
+		case WIZ_NOTICE_UP:
+			this->MsgRecv_NoticeUp(pkt);
 			return true;
 		case WIZ_PARTY:
 			this->MsgRecv_PartyOrForce(pkt);
@@ -4575,6 +4582,10 @@ void CGameProcMain::InitUI()
 	m_pUINotice->LoadFromFile(pTbl->szNotice);
 	m_pUINotice->SetVisibleWithNoSound(false);
 
+	m_pUINoticeUp->Init(s_pUIMgr);
+	m_pUINoticeUp->PositionAtTopRight(iW);
+	m_pUINoticeUp->SetVisible(false);
+
 	m_pUIClassChange->Init(s_pUIMgr);
 	m_pUIClassChange->LoadFromFile(pTbl->szClassChange);
 	m_pUIClassChange->SetVisibleWithNoSound(false);
@@ -5744,6 +5755,36 @@ void CGameProcMain::MsgRecv_Notice(Packet& pkt)
 		m_pUINotice->SetPos(x, y);
 		m_pUINotice->SetVisible(true);
 	}
+}
+
+// OPENKO_NOTICEUP_NATIVE_V1: top-right in-game notice rows.
+void CGameProcMain::MsgRecv_NoticeUp(Packet& pkt)
+{
+    const int count = pkt.read<uint8_t>();
+    if (count < 0 || count > static_cast<int>(CUINoticeUp::MaxEntries))
+        return;
+
+    std::vector<CUINoticeUp::Entry> entries;
+    entries.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i)
+    {
+        const uint8_t titleLen = pkt.read<uint8_t>();
+        if (titleLen == 0 || titleLen > 42)
+            return;
+        std::string title;
+        pkt.readString(title, titleLen);
+        const uint8_t detailLen = pkt.read<uint8_t>();
+        if (detailLen > 140)
+            return;
+        std::string detail;
+        pkt.readString(detail, detailLen);
+        entries.emplace_back(NetToLocal(title), NetToLocal(detail));
+    }
+    if (m_pUINoticeUp != nullptr)
+    {
+        m_pUINoticeUp->SetEntries(entries);
+        m_pUINoticeUp->PositionAtTopRight(CN3Base::s_CameraData.vp.Width);
+    }
 }
 
 void CGameProcMain::MsgRecv_PartyOrForce(Packet& pkt)

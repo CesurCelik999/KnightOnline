@@ -15,6 +15,13 @@
 #include <spdlog/fmt/ranges.h>
 
 #include <unordered_set>
+#include <algorithm>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <utility>
+#include <cctype>
+
 
 namespace Ebenezer
 {
@@ -5958,6 +5965,54 @@ void CUser::UserLookChange(int pos, int itemid, int durability)
 	SetShort(sendBuffer, durability, sendIndex);
 	m_pMain->Send_Region(
 		sendBuffer, sendIndex, (int) m_pUserData->m_bZone, m_RegionX, m_RegionZ, this);
+}
+
+// OPENKO_NOTICEUP_NATIVE_V1: per-login, bounded, server-side configurable notices.
+// Filename is relative to Ebenezer's current working directory, just like Notice.txt.
+void CUser::SendNoticeUp()
+{
+    std::ifstream file("notice_up.txt", std::ios::in);
+    if (!file)
+        return; // This optional feature never blocks login.
+
+    auto trim = [](std::string& s) {
+        const auto nonSpace = [](unsigned char c) { return !std::isspace(c); };
+        const auto first = std::find_if(s.begin(), s.end(), nonSpace);
+        const auto last = std::find_if(s.rbegin(), s.rend(), nonSpace).base();
+        if (first >= last) { s.clear(); return; }
+        s = std::string(first, last);
+    };
+    std::vector<std::pair<std::string, std::string>> entries;
+    std::string line;
+    while (entries.size() < 8 && std::getline(file, line))
+    {
+        trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == ';')
+            continue;
+        const auto separator = line.find('|');
+        if (separator == std::string::npos)
+            continue;
+        std::string title = line.substr(0, separator);
+        std::string detail = line.substr(separator + 1);
+        trim(title);
+        trim(detail);
+        if (title.empty() || title.size() > 42 || detail.size() > 140)
+            continue;
+        entries.emplace_back(std::move(title), std::move(detail));
+    }
+    if (entries.empty())
+        return;
+
+    char buffer[2048] {};
+    int offset = 0;
+    SetByte(buffer, WIZ_NOTICE_UP, offset);
+    SetByte(buffer, static_cast<uint8_t>(entries.size()), offset);
+    for (const auto& entry : entries)
+    {
+        SetString1(buffer, entry.first.c_str(), offset);
+        SetString1(buffer, entry.second.c_str(), offset);
+    }
+    Send(buffer, offset);
 }
 
 void CUser::SendNotice()
@@ -14462,6 +14517,7 @@ void CUser::GameStart(char* pBuf)
 		m_pMain->UserInOutForMe(this);
 		m_pMain->NpcInOutForMe(this);
 		SendNotice();
+		SendNoticeUp(); // OPENKO_NOTICEUP_NATIVE_V1
 		SendTimeStatus();
 
 		spdlog::debug(

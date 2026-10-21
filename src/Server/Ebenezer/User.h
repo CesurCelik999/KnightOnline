@@ -542,6 +542,7 @@ public:
 	void PartyRequest(int memberid, bool bCreate);
 	void PartyProcess(char* pBuf);
 	void SendNotice();
+	void SendNoticeUp(); // OPENKO_NOTICEUP_NATIVE_V1
 	void UserLookChange(int pos, int itemid, int durability);
 	void SpeedHackUser();
 	void VersionCheck();

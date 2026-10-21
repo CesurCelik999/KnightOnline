@@ -1,0 +1,10 @@
+# OpenKO NoticeUp: Title|Description (ASCII for first-pass encoding compatibility)
+# Up to 8 lines, title max 42 bytes, description max 140 bytes. Blank/comment lines ignored.
+PLATINUM PREMIUM|Premium benefits and subscription details will appear here.
+SERVER INFORMATION|Welcome to OpenKO. Server rules and contact information.
+GOLDBAR INFORMATION|Information about Goldbar and trading.
+LEVEL 65 CAP|Current level cap and server progression.
+EXP EVENT|Experience events will be announced here.
+DROP EVENT|Drop events will be announced here.
+ACTIVE EVENTS|Current activities and event timetable.
+GM LIST|Game master information will appear here.

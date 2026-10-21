@@ -48,6 +48,7 @@ public:
 	class CUISkillTreeDlg* m_pUISkillTreeDlg;
 	class CUIHotKeyDlg* m_pUIHotKeyDlg;
 	class CUINotice* m_pUINotice;
+	class CUINoticeUp* m_pUINoticeUp; // OPENKO_NOTICEUP_NATIVE_V1
 	class CUIClassChange* m_pUIClassChange;
 	class CUINPCEvent* m_pUINpcEvent;
 	class CUIRepairTooltipDlg* m_pUIRepairTooltip;
@@ -186,6 +187,7 @@ protected:
 	void MsgRecv_ZoneChange(Packet& pkt); // 걍 단순한 존 체인지.
 
 	void MsgRecv_Notice(Packet& pkt);
+	void MsgRecv_NoticeUp(Packet& pkt); // OPENKO_NOTICEUP_NATIVE_V1
 	void MsgRecv_PartyOrForce(Packet& pkt);
 	void MsgRecv_PerTrade(Packet& pkt);
 
