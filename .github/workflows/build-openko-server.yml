@@ -1,0 +1,43 @@
+name: Build OpenKO Server Release
+
+on:
+  push:
+    branches:
+      - 'build/gm-v3-*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+      - name: Build Release x64
+        shell: cmd
+        run: |
+          REM NoticeUp V2 uses getenv() to optionally read OPENKO_SERVER_NAME.
+          REM MSVC C4996 is fatal with /WX; suppress only the CRT deprecation warning.
+          set "CL=/D_CRT_SECURE_NO_WARNINGS"
+          msbuild Server.slnx /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
+      - name: Verify executables
+        shell: pwsh
+        run: |
+          $names = @("AIServer.exe", "Aujard.exe", "Ebenezer.exe", "ItemManager.exe", "VersionManager.exe")
+          foreach ($name in $names) {
+            $path = Join-Path "bin/Release-x64" $name
+            if (!(Test-Path $path)) { throw "Missing: $path" }
+          }
+      - name: Upload Release Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenKO-Server-GM-V3-Release-x64
+          path: |
+            bin/Release-x64/
+            !bin/Release-x64/*.pdb
+            !bin/Release-x64/*.map
+            !bin/Release-x64/*.lib
+          if-no-files-found: error
