@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "AujardApp.h"
+#include <cstring> // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 #include "AujardReadQueueThread.h"
 
 #include <Aujard/binder/AujardBinder.h>
@@ -1152,14 +1153,54 @@ void AujardApp::HeartbeatReceived()
 	_heartbeatReceivedTime = time(nullptr);
 }
 
-void AujardApp::HandleCustomEvent(const char* data)
+void AujardApp::HandleCustomEvent(const char* data, int length)
 {
 	int index                  = 0;
+	if (length < 3) return; // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 	const int16_t userSocketId = GetShort(data, index);
 	switch (const uint8_t command = GetByte(data, index))
 	{
 		case DB_CUSTOM_STIPEND_REQUEST:
 			HandleStipendRequest(data + index, userSocketId);
+			break;
+		case DB_CUSTOM_GENIE_LOAD_REQUEST: // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+		{
+			if (userSocketId < 0 || userSocketId >= MAX_USER || length - index < 2) break;
+			int p = index;
+			const uint8_t charLen = GetByte(data, p);
+			if (!charLen || charLen > MAX_ID_SIZE || length - p < charLen + 1) break;
+			char charId[MAX_ID_SIZE + 1] {};
+			GetString(charId, data, charLen, p);
+			const uint8_t acctLen = GetByte(data, p);
+			if (!acctLen || acctLen > MAX_ID_SIZE || length - p < acctLen) break;
+			char accountId[MAX_ID_SIZE + 1] {};
+			GetString(accountId, data, acctLen, p);
+			const _USER_DATA* user = _dbAgent.UserData[userSocketId];
+			if (user == nullptr || std::strcmp(user->m_id, charId) != 0
+				|| std::strcmp(user->m_Accountid, accountId) != 0) break;
+			uint32_t expiry = 0;
+			uint8_t options[100] {};
+			uint8_t first = 0;
+			if (!_dbAgent.LoadGenieData(accountId, charId, expiry, options, first))
+			{
+				spdlog::error("Genie: load failed for {}", charId);
+				break;
+			}
+			char out[256] {};
+			int outPos = 0;
+			SetByte(out, DB_OPENKO_CUSTOM, outPos);
+			SetShort(out, userSocketId, outPos);
+			SetByte(out, DB_CUSTOM_GENIE_LOAD_RESPONSE, outPos);
+			SetString1(out, charId, outPos);
+			SetDWORD(out, expiry, outPos);
+			SetByte(out, first, outPos);
+			SetString(out, reinterpret_cast<const char*>(options), 100, outPos);
+			if (LoggerSendQueue.PutData(out, outPos) != SMQ_OK)
+				spdlog::error("Genie: load response queue full for {}", charId);
+			break;
+		}
+		case DB_CUSTOM_GENIE_SAVE_REQUEST: // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+			HandleGenieSave(data + index, length - index, userSocketId);
 			break;
 
 		default:
@@ -1167,6 +1208,34 @@ void AujardApp::HandleCustomEvent(const char* data)
 						  "received: {:X}",
 				command);
 	}
+}
+
+
+// OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+void AujardApp::HandleGenieSave(const char* data, int length, int16_t userSocketId)
+{
+    if (data == nullptr || length < 2 || userSocketId < 0 || userSocketId >= MAX_USER)
+        return;
+    int pos = 0;
+    const uint8_t charLen = GetByte(data, pos);
+    if (charLen == 0 || charLen > MAX_ID_SIZE || length - pos < charLen + 1) return;
+    char charId[MAX_ID_SIZE + 1] {};
+    GetString(charId, data, charLen, pos);
+    const uint8_t acctLen = GetByte(data, pos);
+    if (acctLen == 0 || acctLen > MAX_ID_SIZE || length - pos < acctLen + 4 + 1 + 100)
+        return;
+    char accountId[MAX_ID_SIZE + 1] {};
+    GetString(accountId, data, acctLen, pos);
+    const uint32_t expiry = GetDWORD(data, pos);
+    const uint8_t firstUsed = GetByte(data, pos);
+    uint8_t options[100] {};
+    std::memcpy(options, data + pos, sizeof(options));
+    const _USER_DATA* user = _dbAgent.UserData[userSocketId];
+    if (user == nullptr || std::strcmp(user->m_id, charId) != 0
+        || std::strcmp(user->m_Accountid, accountId) != 0)
+        return;
+    if (!_dbAgent.UpdateGenieData(accountId, charId, expiry, options, firstUsed))
+        spdlog::error("Genie: save failed for {}", charId);
 }
 
 void AujardApp::HandleStipendRequest(const char* data, const int16_t userSocketId)

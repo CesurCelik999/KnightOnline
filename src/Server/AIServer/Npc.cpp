@@ -412,9 +412,12 @@ void CNpc::InitMagicValuable()
 // NPC 상태별로 분화한다.
 void CNpc::NpcLive()
 {
-	// Dungeon Work : 변하는 몬스터의 경우 변하게 처리..
-	if (m_byRegenType == 2
-		// 리젠이 되지 못하도록,,,
+	// GM monster must complete its first SetLive() so AG_NPC_INFO reaches Ebenezer.
+	// Preserve the original no-respawn behavior for all other NPCs and for
+	// subsequent deaths of already-spawned GM monsters.
+	const bool suppressRespawn = (m_byRegenType == 2
+		&& !(m_bGmSummoned && m_bFirstLive));
+	if (suppressRespawn
 		|| (m_byRegenType == 1 && m_byChangeType == 100))
 	{
 		m_NpcState   = NPC_LIVE;
@@ -430,7 +433,19 @@ void CNpc::NpcLive()
 		ChangeMonsterInfo(1);
 	}
 
-	if (SetLive())
+	const bool activated = SetLive();
+	if (m_bGmSummoned)
+	{
+		if (activated)
+			spdlog::info("MonSummon: NPC first spawn, AG_NPC_INFO dispatched "
+			             "[serial={} monsterId={} zone={} x={} z={}]",
+				m_sNid + NPC_BAND, m_sSid, m_sCurZone, m_fCurX, m_fCurZ);
+		else
+			spdlog::warn("MonSummon: NPC SetLive failed "
+			             "[serial={} monsterId={} zone={} x={} z={}]",
+				m_sNid + NPC_BAND, m_sSid, m_sCurZone, m_fCurX, m_fCurZ);
+	}
+	if (activated)
 	{
 		m_NpcState   = NPC_STANDING;
 		m_Delay      = m_sStandTime;
@@ -1201,12 +1216,12 @@ bool CNpc::SetLive()
 		NpcTypeParser();
 		m_bFirstLive = false;
 
-		++m_pMain->_loadedNpcCount;
+		if (!m_bGmSummoned) ++m_pMain->_loadedNpcCount;
 
 		//TRACE(_T("Npc - SerLive :  cur = %d\n"), m_pMain->_loadedNpcCount);
 
 		// 몬스터 총 수와 초기화한 몬스터의 수가 같다면
-		if (m_pMain->_totalNpcCount == m_pMain->_loadedNpcCount)
+		if (!m_bGmSummoned && m_pMain->_totalNpcCount == m_pMain->_loadedNpcCount)
 		{
 			spdlog::info("Npc::SetLive: All NPCs initialized [count={}]", m_pMain->_totalNpcCount);
 			m_pMain->GameServerAcceptThread(); // 게임서버 Accept

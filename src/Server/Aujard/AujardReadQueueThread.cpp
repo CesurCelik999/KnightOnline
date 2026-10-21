@@ -10,7 +10,7 @@ AujardReadQueueThread::AujardReadQueueThread() :
 {
 }
 
-void AujardReadQueueThread::process_packet(const char* buffer, int /*len*/)
+void AujardReadQueueThread::process_packet(const char* buffer, int len)
 {
 	AujardApp* appInstance = AujardApp::instance();
 
@@ -75,7 +75,7 @@ void AujardReadQueueThread::process_packet(const char* buffer, int /*len*/)
 			break;
 
 		case DB_OPENKO_CUSTOM:
-			appInstance->HandleCustomEvent(buffer + index);
+			appInstance->HandleCustomEvent(buffer + index, len - index); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 			break;
 
 		default:

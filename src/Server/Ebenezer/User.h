@@ -17,6 +17,7 @@
 
 #include <list>
 #include <span>
+#include <ctime>
 
 namespace Ebenezer
 {
@@ -31,6 +32,14 @@ class CUser : public TcpServerSocket
 {
 public:
 	_USER_DATA* m_pUserData              = nullptr;
+	// OPENKO_HSACSX_GENIE_BRIDGE_V1 user-bound Genie state (SQL persistence not yet attached).
+	std::time_t m_genieUntil = 0;
+	uint8_t m_genieOptions[100] {};
+	bool m_genieActive = false;
+	bool m_genieOptionsDirty = false;
+	bool m_genieLoaded = false; // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+	uint8_t m_genieFirstUsed = 0;
+	double m_genieLastActionTime = 0.0;
 
 	// Login -> Select Char 까지 한시적으로만 쓰는변수. 이외에는 _USER_DATA 안에있는 변수를 쓴다...agent 와의 데이터 동기화를 위해...
 	char m_strAccountID[MAX_ID_SIZE + 1] = {};
@@ -542,6 +551,15 @@ public:
 	void PartyRequest(int memberid, bool bCreate);
 	void PartyProcess(char* pBuf);
 	void SendNotice();
+	void SendNoticeUp(); // OPENKO_NOTICEUP_NATIVE_V1
+	// OPENKO_HSACSX_GENIE_BRIDGE_V1
+	void GeniePacket(char* packet, int packetSize);
+	void RequestGenieDataFromAgent(); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+	void SaveGenieDataToAgent(bool force);
+	void HandleGenieLoadResponse(const char* data, int length);
+	void SendGenieRemaining();
+	void SendGenieState(bool on);
+	uint16_t GenieHoursRemaining() const;
 	void UserLookChange(int pos, int itemid, int durability);
 	void SpeedHackUser();
 	void VersionCheck();

@@ -2233,7 +2233,7 @@ CNpc* EbenezerApp::GetNpcPtr(int sid, int cur_zone)
 	if (!m_bPointCheckFlag)
 		return nullptr;
 
-	for (const auto& [_, pNpc] : m_NpcMap)
+	for (const auto& [_, pNpc] : m_NpcMap.Snapshot())
 	{
 		if (pNpc == nullptr)
 			continue;

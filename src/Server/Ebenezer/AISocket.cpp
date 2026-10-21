@@ -1,4 +1,5 @@
 ﻿#include "pch.h"
+#include <cmath>
 #include "AISocket.h"
 #include "EbenezerApp.h"
 #include "Define.h"
@@ -985,9 +986,30 @@ void CAISocket::RecvNpcInfo(char* pBuf)
 	byObjectType  = GetByte(pBuf, index);
 	byTrapNumber  = GetByte(pBuf, index);
 
-	CNpc* pNpc    = _main->m_NpcMap.GetData(instanceId);
-	if (pNpc == nullptr)
-		return;
+    // GM summoned NPCs do not exist in the startup NPC_INFO_ALL batch.
+    // Register new instances when their first AG_NPC_INFO arrives.
+    CNpc* pNpc = _main->m_NpcMap.GetData(instanceId);
+    if (pNpc == nullptr)
+    {
+        if (Mode == 0 || instanceId < NPC_BAND || instanceId >= INVALID_BAND ||
+            pictureId < 0 || !std::isfinite(fPosX) || !std::isfinite(fPosZ) ||
+            _main->GetMapByIndex(sZoneIndex) == nullptr)
+            return;
+        CNpc* incoming = new CNpc();
+        incoming->Initialize();
+        if (!_main->m_NpcMap.PutData(instanceId, incoming))
+        {
+            delete incoming;
+            pNpc = _main->m_NpcMap.GetData(instanceId);
+            if (pNpc == nullptr) return;
+        }
+        else
+        {
+            pNpc = incoming;
+            spdlog::info("MonSummon: dynamically registered NPC serial={} monsterId={} zone={}",
+                instanceId, npcId, sZone);
+        }
+    }
 
 	pNpc->m_NpcState = NPC_DEAD;
 

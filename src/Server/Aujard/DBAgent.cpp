@@ -19,6 +19,9 @@
 #include <StoredProc/StoredProc.h>
 
 #include <string>
+#include <algorithm> // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+#include <cstring>
+#include <exception>
 
 namespace Aujard
 {
@@ -1529,5 +1532,103 @@ bool CDBAgent::DeleteChar(int index, char* id, char* charId, char* socno)
 
 	return false;
 }*/
+
+
+// OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+// Store 100 binary option bytes as a 200-digit SQL hex literal.  No user text
+// is concatenated into SQL: names and numeric values use ODBC parameters.
+bool CDBAgent::LoadGenieData(const char* accountId, const char* charId,
+    uint32_t& expiry, uint8_t (&options)[100], uint8_t& firstUsed)
+{
+    expiry = 0;
+    firstUsed = 0;
+    std::memset(options, 0, sizeof(options));
+    try
+    {
+        auto conn = db::ConnectionManager::CreatePoolConnection(
+            modelUtil::DbType::GAME, DB_PROCESS_TIMEOUT);
+        if (conn == nullptr) return false;
+        {
+            nanodbc::statement createRow = conn->CreateStatement("EXEC dbo.LOAD_GENIE_DATA ?, ?");
+            createRow.bind(0, charId);
+            createRow.bind(1, accountId);
+            createRow.execute();
+        }
+        nanodbc::statement stmt = conn->CreateStatement(
+            "SELECT s1098GenieTime, CONVERT(VARCHAR(200), strGenieOptions, 2), "
+            "sFirstUsingGenie FROM dbo.USER_GENIE_DATA WHERE strUserID = ?");
+        stmt.bind(0, charId);
+        nanodbc::result result = stmt.execute();
+        if (!result.next()) return false;
+        const int32_t rawExpiry = result.get<int32_t>(0);
+        const std::string hex = result.get<std::string>(1);
+        if (hex.size() != 200) return false;
+        auto nibble = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            return -1;
+        };
+        for (int i = 0; i < 100; ++i)
+        {
+            const int hi = nibble(hex[i * 2]);
+            const int lo = nibble(hex[i * 2 + 1]);
+            if (hi < 0 || lo < 0) return false;
+            options[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        expiry = rawExpiry > 0 ? static_cast<uint32_t>(rawExpiry) : 0;
+        firstUsed = result.get<uint8_t>(2);
+        return true;
+    }
+    catch (const nanodbc::database_error& err)
+    {
+        db::utils::LogDatabaseError(err, "DBAgent::LoadGenieData");
+    }
+    catch (const std::exception& err)
+    {
+        spdlog::error("DBAgent::LoadGenieData: {}", err.what());
+    }
+    return false;
+}
+
+bool CDBAgent::UpdateGenieData(const char* accountId, const char* charId,
+    uint32_t expiry, const uint8_t (&options)[100], uint8_t firstUsed)
+{
+    constexpr char digits[] = "0123456789ABCDEF";
+    std::string hex;
+    hex.reserve(200);
+    for (uint8_t value : options)
+    {
+        hex.push_back(digits[value >> 4]);
+        hex.push_back(digits[value & 15]);
+    }
+    const std::string query = "DECLARE @g BINARY(100) = 0x" + hex
+        + "; EXEC dbo.UPDATE_GENIE_DATA ?, ?, @g, ?, ?";
+    const int32_t expiryValue = static_cast<int32_t>(std::min<uint32_t>(expiry, 2147483647u));
+    const int32_t firstValue = firstUsed;
+    try
+    {
+        auto conn = db::ConnectionManager::CreatePoolConnection(
+            modelUtil::DbType::GAME, DB_PROCESS_TIMEOUT);
+        if (conn == nullptr) return false;
+        nanodbc::statement stmt = conn->CreateStatement(query);
+        stmt.bind(0, charId);
+        stmt.bind(1, accountId);
+        stmt.bind(2, &expiryValue);
+        stmt.bind(3, &firstValue);
+        stmt.execute();
+        return true;
+    }
+    catch (const nanodbc::database_error& err)
+    {
+        db::utils::LogDatabaseError(err, "DBAgent::UpdateGenieData");
+    }
+    catch (const std::exception& err)
+    {
+        spdlog::error("DBAgent::UpdateGenieData: {}", err.what());
+    }
+    return false;
+}
+
 
 } // namespace Aujard

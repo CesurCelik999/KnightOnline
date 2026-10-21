@@ -1,4 +1,8 @@
 ﻿#include "pch.h"
+#include <ctime>
+#include <cstdint>
+#include <cstring>
+#include <algorithm>
 #include "EbenezerApp.h"
 #include "Map.h"
 #include "OperationMessage.h"
@@ -15,6 +19,13 @@
 #include <spdlog/fmt/ranges.h>
 
 #include <unordered_set>
+#include <algorithm>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <utility>
+#include <cctype>
+
 
 namespace Ebenezer
 {
@@ -150,6 +161,14 @@ void CUser::Initialize()
 	m_fBlinkStartTime      = 0.0;
 
 	m_sAliveCount          = 0;
+	// OPENKO_HSACSX_GENIE_BRIDGE_V1
+	m_genieUntil = 0;
+	m_genieActive = false;
+	m_genieOptionsDirty = false;
+	m_genieLoaded = false; // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+	m_genieFirstUsed = 0;
+	m_genieLastActionTime = 0.0;
+	std::memset(m_genieOptions, 0, sizeof(m_genieOptions));
 
 	m_bAbnormalType        = 1; // User starts out in normal size.
 
@@ -632,6 +651,10 @@ void CUser::Parsing(int len, char* pData)
 			ExchangeProcess(pData + index);
 			break;
 
+		case WIZ_GENIE: // OPENKO_HSACSX_GENIE_BRIDGE_V1
+			GeniePacket(pData + index, len - index);
+			break;
+
 		case WIZ_MAGIC_PROCESS:
 			m_MagicProcess.MagicPacket(pData + index);
 			break;
@@ -799,6 +822,183 @@ void CUser::Parsing(int len, char* pData)
 	if (m_bAbnormalType == ABNORMAL_BLINKING)
 		BlinkTimeCheck(currentTime);
 }
+
+
+// OPENKO_HSACSX_GENIE_BRIDGE_V1
+// SQL bridge V2: loaded by Aujard after character selection, persisted on change/logout.
+// Client protocol: WIZ_GENIE 0x97, groups 1 (controls) and 2 (actions).
+uint16_t CUser::GenieHoursRemaining() const
+{
+    const std::time_t now = std::time(nullptr);
+    if (!m_genieLoaded || m_genieUntil <= now) return 0;
+    const uint64_t seconds = static_cast<uint64_t>(m_genieUntil - now);
+    return static_cast<uint16_t>(std::min<uint64_t>((seconds + 3599u) / 3600u, 65535u));
+}
+
+void CUser::SendGenieRemaining()
+{
+    char out[12] {};
+    int pos = 0;
+    SetByte(out, WIZ_GENIE, pos);
+    SetByte(out, 1, pos);
+    SetByte(out, 6, pos);
+    SetShort(out, GenieHoursRemaining(), pos);
+    Send(out, pos);
+}
+
+void CUser::SendGenieState(bool on)
+{
+    if (on && (!m_genieLoaded || GenieHoursRemaining() == 0)) on = false;
+    m_genieActive = on;
+    char out[20] {};
+    int pos = 0;
+    SetByte(out, WIZ_GENIE, pos);
+    SetByte(out, 1, pos);
+    SetByte(out, on ? 4 : 5, pos);
+    SetShort(out, 1, pos);
+    SetShort(out, GenieHoursRemaining(), pos);
+    Send(out, pos);
+}
+
+void CUser::RequestGenieDataFromAgent()
+{
+    if (m_pUserData == nullptr || m_pMain == nullptr || !m_pUserData->m_id[0]
+        || !m_pUserData->m_Accountid[0]) return;
+    char out[128] {};
+    int pos = 0;
+    SetByte(out, DB_OPENKO_CUSTOM, pos);
+    SetShort(out, _socketId, pos);
+    SetByte(out, DB_CUSTOM_GENIE_LOAD_REQUEST, pos);
+    SetString1(out, m_pUserData->m_id, pos);
+    SetString1(out, m_pUserData->m_Accountid, pos);
+    if (m_pMain->m_LoggerSendQueue.PutData(out, pos) != SMQ_OK)
+        spdlog::error("Genie: failed to queue load for {}", m_pUserData->m_id);
+}
+
+void CUser::SaveGenieDataToAgent(bool force)
+{
+    if (!m_genieLoaded || m_pUserData == nullptr || m_pMain == nullptr
+        || (!force && !m_genieOptionsDirty) || !m_pUserData->m_id[0]
+        || !m_pUserData->m_Accountid[0]) return;
+    char out[256] {};
+    int pos = 0;
+    SetByte(out, DB_OPENKO_CUSTOM, pos);
+    SetShort(out, _socketId, pos);
+    SetByte(out, DB_CUSTOM_GENIE_SAVE_REQUEST, pos);
+    SetString1(out, m_pUserData->m_id, pos);
+    SetString1(out, m_pUserData->m_Accountid, pos);
+    const std::time_t expiry = std::max<std::time_t>(0,
+        std::min<std::time_t>(m_genieUntil, 2147483647));
+    SetDWORD(out, static_cast<uint32_t>(expiry), pos);
+    SetByte(out, m_genieFirstUsed, pos);
+    SetString(out, reinterpret_cast<const char*>(m_genieOptions),
+        static_cast<int>(sizeof(m_genieOptions)), pos);
+    if (m_pMain->m_LoggerSendQueue.PutData(out, pos) == SMQ_OK)
+        m_genieOptionsDirty = false;
+    else
+        spdlog::error("Genie: failed to queue save for {}", m_pUserData->m_id);
+}
+
+void CUser::HandleGenieLoadResponse(const char* data, int length)
+{
+    if (data == nullptr || m_pUserData == nullptr || length < 1) return;
+    int pos = 0;
+    const uint8_t nameLen = GetByte(data, pos);
+    if (nameLen == 0 || nameLen > MAX_ID_SIZE || length - pos < nameLen + 4 + 1 + 100)
+        return;
+    char name[MAX_ID_SIZE + 1] {};
+    GetString(name, data, nameLen, pos);
+    if (std::strcmp(name, m_pUserData->m_id) != 0) return; // socket was reused
+    const uint32_t expiry = GetDWORD(data, pos);
+    const uint8_t first = GetByte(data, pos);
+    if (m_genieLoaded) return; // do not overwrite settings changed after load
+    std::memcpy(m_genieOptions, data + pos, sizeof(m_genieOptions));
+    m_genieUntil = static_cast<std::time_t>(expiry);
+    m_genieFirstUsed = first;
+    m_genieActive = false;
+    m_genieOptionsDirty = false;
+    m_genieLoaded = true;
+    if (_state == CONNECTION_STATE_GAMESTART) SendGenieRemaining();
+}
+
+void CUser::GeniePacket(char* packet, int packetSize)
+{
+    if (_state != CONNECTION_STATE_GAMESTART || m_pUserData == nullptr
+        || packet == nullptr || packetSize < 2 || packetSize > 512) return;
+    const auto group = static_cast<uint8_t>(packet[0]);
+    const auto command = static_cast<uint8_t>(packet[1]);
+    if (group == 1)
+    {
+        switch (command)
+        {
+            case 1: // Genie potion/item use: not enabled without inventory transaction.
+                return;
+            case 2: // Load saved options
+            {
+                if (!m_genieLoaded) return;
+                char out[128] {};
+                int pos = 0;
+                SetByte(out, WIZ_GENIE, pos);
+                SetByte(out, 1, pos);
+                SetByte(out, 2, pos);
+                for (uint8_t value : m_genieOptions) SetByte(out, value, pos);
+                Send(out, pos);
+                return;
+            }
+            case 3: // Save 100-byte options
+                if (!m_genieLoaded || packetSize != 102) return;
+                std::memcpy(m_genieOptions, packet + 2, sizeof(m_genieOptions));
+                m_genieOptionsDirty = true;
+                SaveGenieDataToAgent(false);
+                return;
+            case 4: // Start
+                if (!m_genieLoaded || GenieHoursRemaining() == 0 || m_pUserData->m_sHp <= 0)
+                {
+                    SendGenieState(false);
+                    SendGenieRemaining();
+                    return;
+                }
+                SendGenieState(true);
+                return;
+            case 5: // Stop
+                SendGenieState(false);
+                return;
+            case 6: // Time query
+                SendGenieRemaining();
+                return;
+            default: return;
+        }
+    }
+    if (group != 2 || !m_genieLoaded || !m_genieActive) return;
+    if (GenieHoursRemaining() == 0 || m_pUserData->m_sHp <= 0)
+    {
+        SendGenieState(false);
+        return;
+    }
+    const double now = TimeGet();
+    if (now - m_genieLastActionTime < 0.07) return;
+    m_genieLastActionTime = now;
+    char* nativePacket = packet + 2;
+    switch (command)
+    {
+        case 1: // MoveProcess reads 9 bytes
+            if (packetSize >= 11) MoveProcess(nativePacket);
+            break;
+        case 2: // Rotate reads 2 bytes
+            if (packetSize >= 4) Rotate(nativePacket);
+            break;
+        case 3: // Attack reads 8 bytes
+            if (packetSize >= 10) Attack(nativePacket);
+            break;
+        case 4: // MagicPacket reads 21 native bytes; enforce full payload
+            if (packetSize >= 23) m_MagicProcess.MagicPacket(nativePacket);
+            break;
+        default: break;
+    }
+}
+// END OPENKO_HSACSX_GENIE_BRIDGE_V1
+// OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+
 
 void CUser::VersionCheck()
 {
@@ -1247,6 +1447,7 @@ void CUser::SelectCharacter(const char* pBuf)
 	Send(sendBuffer, sendIndex);
 
 	SetDetailData(); // 디비에 없는 데이터 셋팅...
+	RequestGenieDataFromAgent(); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 
 	//TRACE(_T("SelectCharacter 111 - id=%hs, knights=%d, fame=%d\n"), m_pUserData->m_id, m_pUserData->m_bKnights, m_pUserData->m_bFame);
 
@@ -1394,6 +1595,7 @@ void CUser::AllCharInfoToAgent()
 
 void CUser::UserDataSaveToAgent()
 {
+	SaveGenieDataToAgent(false); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 	int sendIndex = 0, retvalue = 0;
 	char sendBuffer[256] {};
 
@@ -1427,6 +1629,7 @@ void CUser::UserDataSaveToAgent()
 
 void CUser::LogOut()
 {
+	SaveGenieDataToAgent(true); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 	int index = 0, sendIndex = 0, count = 0;
 	char sendBuffer[256] {};
 
@@ -5958,6 +6161,54 @@ void CUser::UserLookChange(int pos, int itemid, int durability)
 	SetShort(sendBuffer, durability, sendIndex);
 	m_pMain->Send_Region(
 		sendBuffer, sendIndex, (int) m_pUserData->m_bZone, m_RegionX, m_RegionZ, this);
+}
+
+// OPENKO_NOTICEUP_NATIVE_V1: per-login, bounded, server-side configurable notices.
+// Filename is relative to Ebenezer's current working directory, just like Notice.txt.
+void CUser::SendNoticeUp()
+{
+    std::ifstream file("notice_up.txt", std::ios::in);
+    if (!file)
+        return; // This optional feature never blocks login.
+
+    auto trim = [](std::string& s) {
+        const auto nonSpace = [](unsigned char c) { return !std::isspace(c); };
+        const auto first = std::find_if(s.begin(), s.end(), nonSpace);
+        const auto last = std::find_if(s.rbegin(), s.rend(), nonSpace).base();
+        if (first >= last) { s.clear(); return; }
+        s = std::string(first, last);
+    };
+    std::vector<std::pair<std::string, std::string>> entries;
+    std::string line;
+    while (entries.size() < 8 && std::getline(file, line))
+    {
+        trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == ';')
+            continue;
+        const auto separator = line.find('|');
+        if (separator == std::string::npos)
+            continue;
+        std::string title = line.substr(0, separator);
+        std::string detail = line.substr(separator + 1);
+        trim(title);
+        trim(detail);
+        if (title.empty() || title.size() > 42 || detail.size() > 140)
+            continue;
+        entries.emplace_back(std::move(title), std::move(detail));
+    }
+    if (entries.empty())
+        return;
+
+    char buffer[2048] {};
+    int offset = 0;
+    SetByte(buffer, WIZ_NOTICE_UP, offset);
+    SetByte(buffer, static_cast<uint8_t>(entries.size()), offset);
+    for (const auto& entry : entries)
+    {
+        SetString1(buffer, entry.first.c_str(), offset);
+        SetString1(buffer, entry.second.c_str(), offset);
+    }
+    Send(buffer, offset);
 }
 
 void CUser::SendNotice()
@@ -14462,6 +14713,7 @@ void CUser::GameStart(char* pBuf)
 		m_pMain->UserInOutForMe(this);
 		m_pMain->NpcInOutForMe(this);
 		SendNotice();
+		SendNoticeUp(); // OPENKO_NOTICEUP_NATIVE_V1
 		SendTimeStatus();
 
 		spdlog::debug(
@@ -14512,6 +14764,7 @@ void CUser::GameStart(char* pBuf)
 		}
 
 		SendMyInfo(2);
+		if (m_genieLoaded) SendGenieRemaining(); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 
 		// TODO:
 		// BlinkStart();

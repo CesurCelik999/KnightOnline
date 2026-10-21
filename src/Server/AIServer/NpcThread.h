@@ -4,6 +4,8 @@
 #pragma once
 
 #include <shared/Thread.h>
+#include <vector>
+#include <mutex>
 
 #include "Define.h" // NPC_NUM
 
@@ -16,11 +18,15 @@ class CNpcThread : public Thread
 public:
 	CNpcThread();
 	void thread_loop() override;
+    void AddGmNpc(CNpc* npc);
 
 public:
 	CNpc* m_pNpc[NPC_NUM];
 
 	int16_t m_sThreadNumber; // thread number ,, test
+private:
+    std::mutex _gmNpcMutex;
+    std::vector<CNpc*> _gmNpcs; // owned by AIServerApp::_npcMap
 };
 
 } // namespace AIServer

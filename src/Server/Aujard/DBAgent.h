@@ -135,6 +135,11 @@ public:
 
 	/// \brief populates UserData[userId] from the database
 	bool LoadUserData(const char* accountId, const char* charId, int userId);
+	// OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+	bool LoadGenieData(const char* accountId, const char* charId, uint32_t& expiry,
+		uint8_t (&options)[100], uint8_t& firstUsed);
+	bool UpdateGenieData(const char* accountId, const char* charId, uint32_t expiry,
+		const uint8_t (&options)[100], uint8_t firstUsed);
 
 	/// \brief Attempts to claim a stipend in USER_KNIGHTS_RANK/USER_PERSONAL_RANK.
 	/// \param type see e_StipendType

@@ -131,6 +131,8 @@ enum e_GameOpcode : uint8_t
 	WIZ_SKILLDATA           = 0x79,
 	WIZ_PROGRAMCHECK        = 0x7A,
 	WIZ_BIFROST             = 0x7B,
+	WIZ_NOTICE_UP           = 0x7C, // OPENKO_NOTICEUP_NATIVE_V1
+	WIZ_GENIE               = 0x97, // OPENKO_HSACSX_GENIE_BRIDGE_V1
 	WIZ_SERVER_KILL         = 0x7F,
 
 	// NOTE(srmeier): testing this debug string functionality
@@ -201,7 +203,10 @@ enum e_CustomOpCode : uint8_t
 	/// User Ranking Stipend Request
 	DB_CUSTOM_STIPEND_REQUEST  = 0,
 	/// User Ranking Stipend Response
-	DB_CUSTOM_STIPEND_RESPONSE = 1
+	DB_CUSTOM_STIPEND_RESPONSE = 1,
+	DB_CUSTOM_GENIE_LOAD_REQUEST = 2, // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+	DB_CUSTOM_GENIE_LOAD_RESPONSE = 3,
+	DB_CUSTOM_GENIE_SAVE_REQUEST = 4
 };
 
 /// \brief The type of stipend being requested

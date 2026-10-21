@@ -159,7 +159,8 @@ public:
 
 	/// \brief Handles a DB_OPENKO_CUSTOM request
 	/// \see DB_OPENKO_CUSTOM, e_CustomOpCode
-	void HandleCustomEvent(const char* data);
+	void HandleCustomEvent(const char* data, int length); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+	void HandleGenieSave(const char* data, int length, int16_t userSocketId);
 
 	/// \brief Handles a user stipend request.  Custom database operation
 	/// \see DB_CUSTOM_STIPEND_REQUEST

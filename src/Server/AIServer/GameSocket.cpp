@@ -135,7 +135,7 @@ void CGameSocket::CloseProcess()
 	TcpServerSocket::CloseProcess();
 }
 
-void CGameSocket::Parsing(int /*length*/, char* pData)
+void CGameSocket::Parsing(int length, char* pData)
 {
 	int index     = 0;
 	uint8_t bType = GetByte(pData, index);
@@ -145,6 +145,10 @@ void CGameSocket::Parsing(int /*length*/, char* pData)
 		case AI_SERVER_CONNECT:
 			RecvServerConnect(pData);
 			break;
+
+        case 14: // OPENKO GM_MONSTER_SPAWN, private game-server -> AI packet
+            RecvGmMonsterSpawn(length - index, pData + index);
+            break;
 
 		case AG_USER_INFO:
 			RecvUserInfo(pData + index);
@@ -238,6 +242,24 @@ void CGameSocket::Parsing(int /*length*/, char* pData)
 }
 
 // sungyong 2002.05.22
+// [int16 monsterId][int32 count][int16 zoneId][float x][float z] = 16 bytes.
+void CGameSocket::RecvGmMonsterSpawn(int length, char* data)
+{
+    if (length != 16 || _zoneNo < 0 || !m_pMain->_firstServerFlag)
+    {
+        spdlog::warn("MonSummon: rejected malformed/unready request len={} socketZone={}",
+                     length, _zoneNo);
+        return;
+    }
+    int index = 0;
+    const int monsterId = GetShort(data, index);
+    const int count = GetDWORD(data, index);
+    const int zoneId = GetShort(data, index);
+    const float x = GetFloat(data, index);
+    const float z = GetFloat(data, index);
+    m_pMain->SpawnGmMonsters(monsterId, count, zoneId, x, z);
+}
+
 void CGameSocket::RecvServerConnect(char* pBuf)
 {
 	int index = 1, outindex = 0;
@@ -1186,7 +1208,7 @@ void CGameSocket::RecvBattleEvent(char* pBuf)
 		m_pMain->ResetBattleZone();
 	}
 
-	for (const auto& [_, pNpc] : m_pMain->_npcMap)
+	for (const auto& [_, pNpc] : m_pMain->_npcMap.Snapshot())
 	{
 		if (pNpc == nullptr)
 			continue;

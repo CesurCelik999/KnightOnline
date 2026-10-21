@@ -9,6 +9,7 @@
 #include "GameDefine.h"
 #include "AISocket.h"
 #include "Npc.h"
+#include "DynamicNpcMap.h"
 #include "Knights.h"
 #include "KnightsManager.h"
 #include "KnightsSiegeWar.h"
@@ -45,7 +46,7 @@ using MagicType4TableMap     = CSTLMap<model::MagicType4>;
 using MagicType5TableMap     = CSTLMap<model::MagicType5>;
 using MagicType7TableMap     = CSTLMap<model::MagicType7>;
 using MagicType8TableMap     = CSTLMap<model::MagicType8>;
-using NpcMap                 = CSTLMap<CNpc>;
+using NpcMap                 = openko_ext::DynamicNpcMap<CNpc, INVALID_BAND>;
 using AISocketMap            = std::unordered_map<int, std::shared_ptr<TcpClientSocket>>;
 using PartyMap               = CSTLMap<_PARTY_GROUP>;
 using KnightsMap             = CSTLMap<CKnights>;
