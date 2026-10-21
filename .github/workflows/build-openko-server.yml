@@ -19,6 +19,9 @@ jobs:
       - name: Build Release x64
         shell: cmd
         run: |
+          REM NoticeUp V2 uses getenv() to optionally read OPENKO_SERVER_NAME.
+          REM MSVC C4996 is fatal with /WX; suppress only the CRT deprecation warning.
+          set "CL=/D_CRT_SECURE_NO_WARNINGS"
           msbuild Server.slnx /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
       - name: Verify executables
         shell: pwsh
