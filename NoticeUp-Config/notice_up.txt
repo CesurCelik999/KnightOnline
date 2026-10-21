@@ -1,10 +1,13 @@
-# OpenKO NoticeUp: Title|Description (ASCII for first-pass encoding compatibility)
-# Up to 8 lines, title max 42 bytes, description max 140 bytes. Blank/comment lines ignored.
-PLATINUM PREMIUM|Premium benefits and subscription details will appear here.
-SERVER INFORMATION|Welcome to OpenKO. Server rules and contact information.
-GOLDBAR INFORMATION|Information about Goldbar and trading.
-LEVEL 65 CAP|Current level cap and server progression.
-EXP EVENT|Experience events will be announced here.
-DROP EVENT|Drop events will be announced here.
-ACTIVE EVENTS|Current activities and event timetable.
-GM LIST|Game master information will appear here.
+# NoticeUp V2 -- save as notice_up.txt next to Ebenezer.exe
+# Server number is read from Ebenezer's ZONE_INFO.MY_INFO, not entered here.
+# The event lines below are ADMINISTRATOR STATUS settings, NOT live event detection.
+# Empty/OFF/0 hides an event. Numeric values render as percentages.
+@SERVER_NAME=MYKO
+@WELCOME=Sunucumuza hos geldiniz!
+@EXP_EVENT=OFF
+@NP_EVENT=OFF
+@DROP_EVENT=OFF
+
+# Add custom notices below: TITLE|TEXT or TITLE-TEXT or a plain line.
+BASLIK1|TEXT1
+BASLIK2|TEXT2
