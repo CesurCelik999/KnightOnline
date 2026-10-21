@@ -21,6 +21,7 @@
 #include <vector>
 #include <utility>
 #include <cctype>
+#include <cstdlib>
 
 
 namespace Ebenezer
@@ -5967,47 +5968,126 @@ void CUser::UserLookChange(int pos, int itemid, int durability)
 		sendBuffer, sendIndex, (int) m_pUserData->m_bZone, m_RegionX, m_RegionZ, this);
 }
 
-// OPENKO_NOTICEUP_NATIVE_V1: per-login, bounded, server-side configurable notices.
-// Filename is relative to Ebenezer's current working directory, just like Notice.txt.
+// OPENKO_NOTICEUP_NATIVE_V2: bounded per-login server notice rows.
+// The actual EXP/NP/DROP bonus implementation is NOT changed here.
+// Event flags in this file reflect optional administrator-provided status,
+// not an inferred state from the game engine.
 void CUser::SendNoticeUp()
 {
-    std::ifstream file("notice_up.txt", std::ios::in);
-    if (!file)
-        return; // This optional feature never blocks login.
+    constexpr size_t maxEntries = 8;
+    using Entry = std::pair<std::string, std::string>;
 
-    auto trim = [](std::string& s) {
+    auto trim = [](std::string& value) {
         const auto nonSpace = [](unsigned char c) { return !std::isspace(c); };
-        const auto first = std::find_if(s.begin(), s.end(), nonSpace);
-        const auto last = std::find_if(s.rbegin(), s.rend(), nonSpace).base();
-        if (first >= last) { s.clear(); return; }
-        s = std::string(first, last);
+        const auto first = std::find_if(value.begin(), value.end(), nonSpace);
+        const auto last = std::find_if(value.rbegin(), value.rend(), nonSpace).base();
+        if (first >= last) { value.clear(); return; }
+        value = std::string(first, last);
     };
-    std::vector<std::pair<std::string, std::string>> entries;
+
+    std::string serverName = "MYKO";
+    if (const char* envName = std::getenv("OPENKO_SERVER_NAME"))
+    {
+        serverName = envName;
+        trim(serverName);
+        if (serverName.empty())
+            serverName = "MYKO";
+    }
+
+    std::string welcome = "Sunucumuza hos geldiniz!";
+    std::string expEvent, npEvent, dropEvent;
+    std::vector<Entry> manualEntries;
+    std::ifstream file("notice_up.txt", std::ios::in);
     std::string line;
-    while (entries.size() < 8 && std::getline(file, line))
+    while (file && std::getline(file, line))
     {
         trim(line);
         if (line.empty() || line[0] == '#' || line[0] == ';')
             continue;
-        const auto separator = line.find('|');
-        if (separator == std::string::npos)
+
+        if (line.front() == '@')
+        {
+            const size_t eq = line.find('=');
+            if (eq == std::string::npos)
+                continue;
+            const std::string key = line.substr(1, eq - 1);
+            std::string value = line.substr(eq + 1);
+            trim(value);
+            if (key == "SERVER_NAME" && !value.empty())
+                serverName = value;
+            else if (key == "WELCOME")
+                welcome = value;
+            else if (key == "EXP_EVENT")
+                expEvent = value;
+            else if (key == "NP_EVENT")
+                npEvent = value;
+            else if (key == "DROP_EVENT")
+                dropEvent = value;
             continue;
+        }
+
+        if (manualEntries.size() >= maxEntries)
+            continue;
+
+        // Accepted: TITLE|TEXT, TITLE-TEXT, TITLE=TEXT, or one line of text.
+        size_t separator = line.find('|');
+        if (separator == std::string::npos)
+            separator = line.find('=');
+        if (separator == std::string::npos)
+            separator = line.find('-');
+
         std::string title = line.substr(0, separator);
-        std::string detail = line.substr(separator + 1);
+        std::string detail = separator == std::string::npos
+            ? std::string() : line.substr(separator + 1);
         trim(title);
         trim(detail);
         if (title.empty() || title.size() > 42 || detail.size() > 140)
             continue;
-        entries.emplace_back(std::move(title), std::move(detail));
+        manualEntries.emplace_back(std::move(title), std::move(detail));
     }
-    if (entries.empty())
-        return;
+
+    // Resolve the server number from the running Ebenezer server, not the text file.
+    trim(serverName);
+    if (serverName.empty())
+        serverName = "MYKO";
+    const std::string serverSuffix = " | SERVER " + std::to_string(m_pMain->m_nServerNo);
+    if (serverName.size() + serverSuffix.size() > 42)
+        serverName.resize(42 - serverSuffix.size());
+
+    std::vector<Entry> entries;
+    entries.reserve(maxEntries);
+    auto add = [&entries](std::string title, std::string detail = std::string()) {
+        if (entries.size() < maxEntries && !title.empty()
+            && title.size() <= 42 && detail.size() <= 140)
+            entries.emplace_back(std::move(title), std::move(detail));
+    };
+
+    add(serverName + serverSuffix);
+    add(welcome);
+
+    auto addEvent = [&add, &trim](const char* label, std::string status) {
+        trim(status);
+        if (status.empty() || status == "0" || status == "OFF" || status == "off"
+            || status == "false" || status == "FALSE")
+            return;
+        const bool numeric = std::all_of(status.begin(), status.end(),
+            [](unsigned char c) { return std::isdigit(c); });
+        if (numeric)
+            status = "%" + status;
+        add(std::string(label) + ": " + status);
+    };
+    addEvent("EXP Event", expEvent);
+    addEvent("NP Event", npEvent);
+    addEvent("DROP Event", dropEvent);
+
+    for (const Entry& entry : manualEntries)
+        add(entry.first, entry.second);
 
     char buffer[2048] {};
     int offset = 0;
     SetByte(buffer, WIZ_NOTICE_UP, offset);
     SetByte(buffer, static_cast<uint8_t>(entries.size()), offset);
-    for (const auto& entry : entries)
+    for (const Entry& entry : entries)
     {
         SetString1(buffer, entry.first.c_str(), offset);
         SetString1(buffer, entry.second.c_str(), offset);
