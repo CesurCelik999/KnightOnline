@@ -565,7 +565,7 @@ public:
     void GenieSkillSlotPacket(const char* data,int length);
     void HandleGenieSkillSlotsResponse(const char* data,int length);
     void HandleGenieSkillSlotSaveResult(const char* data,int length);
-    bool ValidGenieSkill(uint32_t skillId) const;
+    bool ValidGenieSkill(uint8_t group,uint32_t skillId) const; // RIFT_GENIE_STAGE5_NATIVE_ENGINE_V1
 	void SendGenieRemaining();
 	void SendGenieState(bool on);
 	uint16_t GenieHoursRemaining() const;

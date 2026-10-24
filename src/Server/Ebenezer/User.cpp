@@ -1015,18 +1015,37 @@ void CUser::RequestGenieSkillSlots()
     m_pMain->m_LoggerSendQueue.PutData(out,pos);
 }
 
-bool CUser::ValidGenieSkill(uint32_t skillId) const
+// RIFT_GENIE_STAGE5_NATIVE_ENGINE_V1: original server Magic/MagicType3/4 data.
+// This is a *slot assignment* check, not a substitute for cast-time validation.
+bool CUser::ValidGenieSkill(uint8_t group,uint32_t skillId) const
 {
-    if (!m_pUserData || !m_pMain || !skillId || skillId>2147483647u) return false;
-    const model::Magic* magic=m_pMain->m_MagicTableMap.GetData(skillId);
-    if (!magic) return false;
-    const int tree=magic->Skill%10;
+    if (!m_pUserData || !m_pMain || !skillId || skillId>2147483647u || group<1 || group>3) return false;
+    const model::Magic* m=m_pMain->m_MagicTableMap.GetData(skillId);
+    if (!m || (m->Skill==0 && m->UseItem!=0)) return false; // exclude item-triggered potion/scroll effects, retain archer arrow skills
+    const int tree=m->Skill%10;
     if (tree!=0)
     {
-        if (tree<0 || tree>=9 || magic->Skill/10!=m_pUserData->m_sClass) return false;
-        return magic->SkillLevel<=m_pUserData->m_bstrSkill[tree];
+        if (tree<0 || tree>=9 || m->Skill/10!=m_pUserData->m_sClass ||
+            m->SkillLevel>m_pUserData->m_bstrSkill[tree]) return false;
     }
-    return magic->SkillLevel<=m_pUserData->m_bLevel;
+    else if (m->SkillLevel>m_pUserData->m_bLevel) return false;
+    const bool enemy=m->Moral==7 || m->Moral==10;
+    const bool friendTarget=m->Moral==1 || m->Moral==2 || m->Moral==3 ||
+                            m->Moral==4 || m->Moral==6 || m->Moral==11;
+    const bool t1=m->Type1==1 || m->Type2==1;
+    const bool t2=m->Type1==2 || m->Type2==2;
+    const bool t3=m->Type1==3 || m->Type2==3;
+    const bool t4=m->Type1==4 || m->Type2==4;
+    const bool t7=m->Type1==7 || m->Type2==7;
+    const auto* p3=t3?m_pMain->m_MagicType3TableMap.GetData(skillId):nullptr;
+    const auto* p4=t4?m_pMain->m_MagicType4TableMap.GetData(skillId):nullptr;
+    const bool heal=p3 && p3->DirectType==1 && (p3->FirstDamage>0 || p3->TimeDamage>0);
+    const bool mana=p3 && p3->DirectType==2 && (p3->FirstDamage>0 || p3->TimeDamage>0);
+    const bool offensive3=p3 && ((p3->DirectType==1 &&
+                         (p3->FirstDamage<0 || p3->TimeDamage<0)) || p3->DirectType!=1);
+    if (group==1) return enemy && (t1 || t2 || t7 || offensive3 || (t4 && p4));
+    if (group==2) return friendTarget && (heal || mana);
+    return friendTarget && ((t4 && p4) || heal || mana);
 }
 
 void CUser::HandleGenieSkillSlotsResponse(const char* data,int length)
@@ -1050,6 +1069,7 @@ void CUser::HandleGenieSkillSlotsResponse(const char* data,int length)
         const int ofs=group==1?0:group==2?8:group==3?12:-1;
         const int maxCount=group==1?8:group==2?4:group==3?12:0;
         if (ofs<0 || slot<1 || slot>maxCount || !id || party>1 || (group!=3 && party)) return;
+        if (!ValidGenieSkill(group,id)) continue; // RIFT_GENIE_STAGE5_NATIVE_ENGINE_V1: retain historical SQL row, hide invalid UI record
         ids[ofs+slot-1]=id;
         flags[ofs+slot-1]=party;
     }
@@ -1059,7 +1079,9 @@ void CUser::HandleGenieSkillSlotsResponse(const char* data,int length)
     char out[256] {};
     int p=0;
     SetByte(out,WIZ_GENIE,p); SetByte(out,3,p); SetByte(out,1,p);
-    SetByte(out,count,p);
+    uint8_t acceptedCount=0;
+    for (int i=0;i<24;++i) if(ids[i]) ++acceptedCount;
+    SetByte(out,acceptedCount,p);
     for(int i=0;i<24;++i) if (ids[i])
     {
         const uint8_t group=i<8?1:i<12?2:3;
@@ -1107,7 +1129,7 @@ void CUser::GenieSkillSlotPacket(const char* data,int length)
     const uint32_t id=GetDWORD(data,p);
     const uint8_t party=GetByte(data,p);
     if (group<1 || group>3 || slot<1 || slot>(group==1?8:group==2?4:12) ||
-        party>1 || (group!=3 && party!=0) || (id && !ValidGenieSkill(id))) return;
+        party>1 || (group!=3 && party!=0) || (id && !ValidGenieSkill(group,id))) return;
     char out[140] {}; int x=0;
     SetByte(out,DB_OPENKO_CUSTOM,x); SetShort(out,_socketId,x);
     SetByte(out,DB_CUSTOM_GENIE_SLOT_SAVE_REQUEST,x);
