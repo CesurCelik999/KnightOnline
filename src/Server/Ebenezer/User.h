@@ -36,6 +36,10 @@ public:
 	std::time_t m_genieUntil = 0;
 	uint8_t m_genieOptions[100] {};
 	bool m_genieActive = false;
+    bool m_riftGmFx=false;
+    double m_riftLastFxQuery=-100;
+    void RiftBroadcastVanity(uint8_t kind,bool on);
+    void RiftSendVanitySnapshot(); // RIFT_GENIE_GMFX_STAGE6_V1
 	bool m_genieOptionsDirty = false;
 	bool m_genieLoaded = false; // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 	uint8_t m_genieFirstUsed = 0;

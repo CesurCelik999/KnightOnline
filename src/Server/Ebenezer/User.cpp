@@ -164,6 +164,7 @@ void CUser::Initialize()
 	// OPENKO_HSACSX_GENIE_BRIDGE_V1
 	m_genieUntil = 0;
 	m_genieActive = false;
+    m_riftGmFx=false; m_riftLastFxQuery=-100; // RIFT_GENIE_GMFX_STAGE6_V1
 	m_genieOptionsDirty = false;
 	m_genieLoaded = false; // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
     m_genieSlotsLoaded = false; // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
@@ -849,10 +850,50 @@ void CUser::SendGenieRemaining()
     Send(out, pos);
 }
 
+// RIFT_GENIE_GMFX_STAGE6_V1: authoritative broadcast. No client-trusted role data.
+void CUser::RiftBroadcastVanity(uint8_t kind,bool on)
+{
+    if (!m_pMain || !m_pUserData || (kind!=1 && kind!=2)) return;
+    char out[10] {}; int at=0;
+    SetByte(out,WIZ_GENIE,at); SetByte(out,4,at); SetByte(out,2,at);
+    SetShort(out,_socketId,at); SetByte(out,kind,at); SetByte(out,on?1:0,at);
+    // Region broadcast for other players; explicitly send to self too.
+    m_pMain->Send_Region(out,at,m_pUserData->m_bZone,m_RegionX,m_RegionZ,this);
+    Send(out,at);
+}
+void CUser::RiftSendVanitySnapshot()
+{
+    if (!m_pMain || !m_pUserData) return;
+    // Maximum one query every 5 seconds per client. Prevent mass-snapshot abuse.
+    const double now=TimeGet();
+    if (now-m_riftLastFxQuery<5.0) return;
+    m_riftLastFxQuery=now;
+    for (int i=0;i<MAX_USER;++i)
+    {
+        auto p=m_pMain->GetUserPtrUnchecked(i);
+        if (!p || !p->m_pUserData || p->m_pUserData->m_bZone!=m_pUserData->m_bZone) continue;
+        const float dx=p->m_pUserData->m_curx-m_pUserData->m_curx;
+        const float dz=p->m_pUserData->m_curz-m_pUserData->m_curz;
+        if (dx*dx+dz*dz>128.0f*128.0f) continue;
+        if (!p->m_riftGmFx && !(p->m_genieActive && p->GenieHoursRemaining()))continue;
+        char out[10] {};int at=0;
+        SetByte(out,WIZ_GENIE,at);SetByte(out,4,at);SetByte(out,2,at);
+        SetShort(out,i,at);SetByte(out,p->m_riftGmFx?2:1,at);SetByte(out,1,at);
+        Send(out,at);
+        if (p->m_riftGmFx && p->m_genieActive && p->GenieHoursRemaining())
+        {
+            at=0;SetByte(out,WIZ_GENIE,at);SetByte(out,4,at);SetByte(out,2,at);
+            SetShort(out,i,at);SetByte(out,1,at);SetByte(out,1,at);Send(out,at);
+        }
+    }
+}
+
 void CUser::SendGenieState(bool on)
 {
     if (on && (!m_genieLoaded || GenieHoursRemaining() == 0)) on = false;
+    const bool changed=m_genieActive!=on;
     m_genieActive = on;
+    if (changed) RiftBroadcastVanity(1,on); // RIFT_GENIE_GMFX_STAGE6_V1
     char out[20] {};
     int pos = 0;
     SetByte(out, WIZ_GENIE, pos);
@@ -930,7 +971,12 @@ void CUser::GeniePacket(char* packet, int packetSize)
         || packet == nullptr || packetSize < 2 || packetSize > 512) return;
     const auto group = static_cast<uint8_t>(packet[0]);
     const auto command = static_cast<uint8_t>(packet[1]);
-    if (group == 3) { GenieSkillSlotPacket(packet,packetSize); return; } // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
+    if (group == 3) { GenieSkillSlotPacket(packet,packetSize); return; }
+    if (group==4) // RIFT_GENIE_GMFX_STAGE6_V1
+    {
+        if (command==1 && packetSize==2) RiftSendVanitySnapshot();
+        return;
+    } // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
     if (group == 1)
     {
         switch (command)
@@ -1935,6 +1981,11 @@ void CUser::MoveProcess(char* pBuf)
 
 void CUser::UserInOut(uint8_t Type)
 {
+    if (Type==USER_OUT) // RIFT_GENIE_GMFX_STAGE6_V1
+    {
+        if (m_genieActive) RiftBroadcastVanity(1,false);
+        if (m_riftGmFx) RiftBroadcastVanity(2,false);
+    }
 	int sendIndex = 0;
 	char sendBuffer[256] {};
 
@@ -2477,6 +2528,13 @@ void CUser::Chat(char* pBuf)
 		return;
 
 	GetString(chatstr, pBuf, chatlen, index);
+    // Toggle only for authenticated Game Masters; not a client-provided visual flag.
+    if (m_pUserData->m_bAuthority==AUTHORITY_MANAGER && std::strcmp(chatstr,"+gmfx")==0)
+    {
+        m_riftGmFx=!m_riftGmFx;
+        RiftBroadcastVanity(2,m_riftGmFx); // RIFT_GENIE_GMFX_STAGE6_V1
+        return;
+    }
 
 	if (m_pUserData->m_bAuthority == AUTHORITY_MANAGER && chatstr[0] == '+')
 	{
