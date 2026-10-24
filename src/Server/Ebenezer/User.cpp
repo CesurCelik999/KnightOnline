@@ -166,6 +166,9 @@ void CUser::Initialize()
 	m_genieActive = false;
 	m_genieOptionsDirty = false;
 	m_genieLoaded = false; // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+    m_genieSlotsLoaded = false; // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
+    std::memset(m_genieSkillIds,0,sizeof(m_genieSkillIds));
+    std::memset(m_genieSkillParty,0,sizeof(m_genieSkillParty));
 	m_genieFirstUsed = 0;
 	m_genieLastActionTime = 0.0;
 	std::memset(m_genieOptions, 0, sizeof(m_genieOptions));
@@ -918,7 +921,7 @@ void CUser::HandleGenieLoadResponse(const char* data, int length)
     m_genieActive = false;
     m_genieOptionsDirty = false;
     m_genieLoaded = true;
-    if (_state == CONNECTION_STATE_GAMESTART) SendGenieRemaining();
+    if (_state == CONNECTION_STATE_GAMESTART) { SendGenieRemaining(); RequestGenieSkillSlots(); } // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
 }
 
 void CUser::GeniePacket(char* packet, int packetSize)
@@ -927,6 +930,7 @@ void CUser::GeniePacket(char* packet, int packetSize)
         || packet == nullptr || packetSize < 2 || packetSize > 512) return;
     const auto group = static_cast<uint8_t>(packet[0]);
     const auto command = static_cast<uint8_t>(packet[1]);
+    if (group == 3) { GenieSkillSlotPacket(packet,packetSize); return; } // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
     if (group == 1)
     {
         switch (command)
@@ -996,6 +1000,123 @@ void CUser::GeniePacket(char* packet, int packetSize)
         default: break;
     }
 }
+
+// RIFT_GENIE_SLOTS_ROUNDTRIP_V1: group 3, cmds 1=load, 2=save.
+void CUser::RequestGenieSkillSlots()
+{
+    if (_state!=CONNECTION_STATE_GAMESTART || !m_genieLoaded || !m_pUserData || !m_pMain) return;
+    char out[128] {};
+    int pos=0;
+    SetByte(out,DB_OPENKO_CUSTOM,pos);
+    SetShort(out,_socketId,pos);
+    SetByte(out,DB_CUSTOM_GENIE_SLOTS_LOAD_REQUEST,pos);
+    SetString1(out,m_pUserData->m_id,pos);
+    SetString1(out,m_pUserData->m_Accountid,pos);
+    m_pMain->m_LoggerSendQueue.PutData(out,pos);
+}
+
+bool CUser::ValidGenieSkill(uint32_t skillId) const
+{
+    if (!m_pUserData || !m_pMain || !skillId || skillId>2147483647u) return false;
+    const model::Magic* magic=m_pMain->m_MagicTableMap.GetData(skillId);
+    if (!magic) return false;
+    const int tree=magic->Skill%10;
+    if (tree!=0)
+    {
+        if (tree<0 || tree>=9 || magic->Skill/10!=m_pUserData->m_sClass) return false;
+        return magic->SkillLevel<=m_pUserData->m_bstrSkill[tree];
+    }
+    return magic->SkillLevel<=m_pUserData->m_bLevel;
+}
+
+void CUser::HandleGenieSkillSlotsResponse(const char* data,int length)
+{
+    if (!m_pUserData || !data || length<2 || _state!=CONNECTION_STATE_GAMESTART) return;
+    int pos=0;
+    const uint8_t n=GetByte(data,pos);
+    if (n==0 || n>MAX_ID_SIZE || length-pos < n+1) return;
+    char name[MAX_ID_SIZE+1] {};
+    GetString(name,data,n,pos);
+    if (std::strcmp(name,m_pUserData->m_id)!=0) return;
+    const uint8_t count=GetByte(data,pos);
+    if (count>24 || length-pos != count*7) return;
+    uint32_t ids[24] {};
+    uint8_t flags[24] {};
+    for (int i=0;i<count;++i)
+    {
+        const uint8_t group=GetByte(data,pos),slot=GetByte(data,pos);
+        const uint32_t id=GetDWORD(data,pos);
+        const uint8_t party=GetByte(data,pos);
+        const int ofs=group==1?0:group==2?8:group==3?12:-1;
+        const int maxCount=group==1?8:group==2?4:group==3?12:0;
+        if (ofs<0 || slot<1 || slot>maxCount || !id || party>1 || (group!=3 && party)) return;
+        ids[ofs+slot-1]=id;
+        flags[ofs+slot-1]=party;
+    }
+    std::memcpy(m_genieSkillIds,ids,sizeof(ids));
+    std::memcpy(m_genieSkillParty,flags,sizeof(flags));
+    m_genieSlotsLoaded=true;
+    char out[256] {};
+    int p=0;
+    SetByte(out,WIZ_GENIE,p); SetByte(out,3,p); SetByte(out,1,p);
+    SetByte(out,count,p);
+    for(int i=0;i<24;++i) if (ids[i])
+    {
+        const uint8_t group=i<8?1:i<12?2:3;
+        const uint8_t slot=i<8?i+1:i<12?i-7:i-11;
+        SetByte(out,group,p); SetByte(out,slot,p);
+        SetDWORD(out,ids[i],p); SetByte(out,flags[i],p);
+    }
+    Send(out,p);
+}
+
+void CUser::HandleGenieSkillSlotSaveResult(const char* data,int length)
+{
+    if (!m_pUserData || !data || length<2 || _state!=CONNECTION_STATE_GAMESTART) return;
+    int pos=0;
+    const uint8_t n=GetByte(data,pos);
+    if (!n || n>MAX_ID_SIZE || length-pos!=n+1+1+4+1+1) return;
+    char name[MAX_ID_SIZE+1] {};
+    GetString(name,data,n,pos);
+    if (std::strcmp(name,m_pUserData->m_id)!=0) return;
+    const uint8_t group=GetByte(data,pos),slot=GetByte(data,pos);
+    const uint32_t skill=GetDWORD(data,pos);
+    const uint8_t party=GetByte(data,pos),ok=GetByte(data,pos);
+    const int ofs=group==1?0:group==2?8:group==3?12:-1;
+    const int maxCount=group==1?8:group==2?4:group==3?12:0;
+    if (ofs<0 || slot<1 || slot>maxCount || party>1) return;
+    if (ok)
+    {
+        m_genieSkillIds[ofs+slot-1]=skill;
+        m_genieSkillParty[ofs+slot-1]=party;
+    }
+    char out[16] {}; int p=0;
+    SetByte(out,WIZ_GENIE,p); SetByte(out,3,p); SetByte(out,2,p);
+    SetByte(out,group,p); SetByte(out,slot,p); SetByte(out,ok,p);
+    Send(out,p);
+}
+
+void CUser::GenieSkillSlotPacket(const char* data,int length)
+{
+    if (!data || length<2 || !m_genieLoaded || !m_pUserData || !m_pMain) return;
+    const uint8_t cmd=static_cast<uint8_t>(data[1]);
+    if (cmd==1 && length==2) { RequestGenieSkillSlots(); return; }
+    if (cmd!=2 || length!=9 || !m_genieSlotsLoaded) return;
+    int p=2;
+    const uint8_t group=GetByte(data,p),slot=GetByte(data,p);
+    const uint32_t id=GetDWORD(data,p);
+    const uint8_t party=GetByte(data,p);
+    if (group<1 || group>3 || slot<1 || slot>(group==1?8:group==2?4:12) ||
+        party>1 || (group!=3 && party!=0) || (id && !ValidGenieSkill(id))) return;
+    char out[140] {}; int x=0;
+    SetByte(out,DB_OPENKO_CUSTOM,x); SetShort(out,_socketId,x);
+    SetByte(out,DB_CUSTOM_GENIE_SLOT_SAVE_REQUEST,x);
+    SetString1(out,m_pUserData->m_id,x);
+    SetString1(out,m_pUserData->m_Accountid,x);
+    SetByte(out,group,x); SetByte(out,slot,x); SetDWORD(out,id,x); SetByte(out,party,x);
+    m_pMain->m_LoggerSendQueue.PutData(out,x);
+}
+
 // END OPENKO_HSACSX_GENIE_BRIDGE_V1
 // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 

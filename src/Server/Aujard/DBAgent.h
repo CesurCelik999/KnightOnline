@@ -139,7 +139,11 @@ public:
 	bool LoadGenieData(const char* accountId, const char* charId, uint32_t& expiry,
 		uint8_t (&options)[100], uint8_t& firstUsed);
 	bool UpdateGenieData(const char* accountId, const char* charId, uint32_t expiry,
-		const uint8_t (&options)[100], uint8_t firstUsed);
+        const uint8_t (&options)[100], uint8_t firstUsed);
+    // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
+    struct GenieSkillSlotRow { uint8_t group; uint8_t index; uint32_t skillId; uint8_t party; };
+    bool LoadGenieSkillSlots(const char* charId,std::vector<GenieSkillSlotRow>& rows);
+    bool SaveGenieSkillSlot(const char* charId,uint8_t group,uint8_t slot,uint32_t skillId,uint8_t party);
 
 	/// \brief Attempts to claim a stipend in USER_KNIGHTS_RANK/USER_PERSONAL_RANK.
 	/// \param type see e_StipendType

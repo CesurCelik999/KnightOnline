@@ -161,6 +161,7 @@ public:
 	/// \see DB_OPENKO_CUSTOM, e_CustomOpCode
 	void HandleCustomEvent(const char* data, int length); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 	void HandleGenieSave(const char* data, int length, int16_t userSocketId);
+    void HandleGenieSlotOperation(const char* data,int length,int16_t userSocketId,bool save); // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
 
 	/// \brief Handles a user stipend request.  Custom database operation
 	/// \see DB_CUSTOM_STIPEND_REQUEST

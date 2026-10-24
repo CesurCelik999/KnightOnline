@@ -1199,7 +1199,13 @@ void AujardApp::HandleCustomEvent(const char* data, int length)
 				spdlog::error("Genie: load response queue full for {}", charId);
 			break;
 		}
-		case DB_CUSTOM_GENIE_SAVE_REQUEST: // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+		case DB_CUSTOM_GENIE_SLOTS_LOAD_REQUEST: // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
+            HandleGenieSlotOperation(data+index,length-index,userSocketId,false);
+            break;
+        case DB_CUSTOM_GENIE_SLOT_SAVE_REQUEST:
+            HandleGenieSlotOperation(data+index,length-index,userSocketId,true);
+            break;
+        case DB_CUSTOM_GENIE_SAVE_REQUEST: // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 			HandleGenieSave(data + index, length - index, userSocketId);
 			break;
 
@@ -1212,6 +1218,55 @@ void AujardApp::HandleCustomEvent(const char* data, int length)
 
 
 // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+
+// RIFT_GENIE_SLOTS_ROUNDTRIP_V1: requests have character+account bound to socket.
+void AujardApp::HandleGenieSlotOperation(const char* data,int length,int16_t userSocketId,bool save)
+{
+    if (!data || userSocketId<0 || userSocketId>=MAX_USER || length<2) return;
+    int pos=0;
+    const uint8_t n=GetByte(data,pos);
+    if (!n || n>MAX_ID_SIZE || length-pos<n+1) return;
+    char charId[MAX_ID_SIZE+1] {};
+    GetString(charId,data,n,pos);
+    const uint8_t a=GetByte(data,pos);
+    if (!a || a>MAX_ID_SIZE || length-pos<a+(save?7:0)) return;
+    char acct[MAX_ID_SIZE+1] {};
+    GetString(acct,data,a,pos);
+    const _USER_DATA* user=_dbAgent.UserData[userSocketId];
+    if (!user || std::strcmp(user->m_id,charId)!=0 ||
+        std::strcmp(user->m_Accountid,acct)!=0) return;
+    if (save)
+    {
+        if (length-pos!=7) return;
+        const uint8_t group=GetByte(data,pos),slot=GetByte(data,pos);
+        const uint32_t id=GetDWORD(data,pos);
+        const uint8_t party=GetByte(data,pos);
+        const bool ok=_dbAgent.SaveGenieSkillSlot(charId,group,slot,id,party);
+        char out[128] {}; int x=0;
+        SetByte(out,DB_OPENKO_CUSTOM,x); SetShort(out,userSocketId,x);
+        SetByte(out,DB_CUSTOM_GENIE_SLOT_SAVE_RESPONSE,x);
+        SetString1(out,charId,x);
+        SetByte(out,group,x); SetByte(out,slot,x); SetDWORD(out,id,x);
+        SetByte(out,party,x); SetByte(out,ok?1:0,x);
+        LoggerSendQueue.PutData(out,x);
+        return;
+    }
+    if (length!=pos) return;
+    std::vector<CDBAgent::GenieSkillSlotRow> rows;
+    if (!_dbAgent.LoadGenieSkillSlots(charId,rows) || rows.size()>24) return;
+    char out[256] {}; int x=0;
+    SetByte(out,DB_OPENKO_CUSTOM,x); SetShort(out,userSocketId,x);
+    SetByte(out,DB_CUSTOM_GENIE_SLOTS_LOAD_RESPONSE,x);
+    SetString1(out,charId,x);
+    SetByte(out,static_cast<uint8_t>(rows.size()),x);
+    for (const auto& row:rows)
+    {
+        SetByte(out,row.group,x); SetByte(out,row.index,x);
+        SetDWORD(out,row.skillId,x); SetByte(out,row.party,x);
+    }
+    LoggerSendQueue.PutData(out,x);
+}
+
 void AujardApp::HandleGenieSave(const char* data, int length, int16_t userSocketId)
 {
     if (data == nullptr || length < 2 || userSocketId < 0 || userSocketId >= MAX_USER)

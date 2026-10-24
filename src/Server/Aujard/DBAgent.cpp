@@ -1631,4 +1631,67 @@ bool CDBAgent::UpdateGenieData(const char* accountId, const char* charId,
 }
 
 
+
+// RIFT_GENIE_SLOTS_ROUNDTRIP_V1 -- SQL skill selections, separate from Genie time/options.
+bool CDBAgent::LoadGenieSkillSlots(const char* charId, std::vector<GenieSkillSlotRow>& rows)
+{
+    rows.clear();
+    try
+    {
+        auto conn=db::ConnectionManager::CreatePoolConnection(modelUtil::DbType::GAME, DB_PROCESS_TIMEOUT);
+        if (!conn) return false;
+        nanodbc::statement stmt=conn->CreateStatement("EXEC dbo.GENIE_LOAD_SKILL_SLOTS ?");
+        stmt.bind(0,charId);
+        nanodbc::result result=stmt.execute();
+        while (result.next())
+        {
+            GenieSkillSlotRow row {};
+            row.group=result.get<uint8_t>(0);
+            row.index=result.get<uint8_t>(1);
+            row.skillId=static_cast<uint32_t>(result.get<int32_t>(2));
+            row.party=result.get<uint8_t>(3);
+            const int maxSlot=row.group==1?8:row.group==2?4:row.group==3?12:0;
+            if (row.index<1 || row.index>maxSlot || row.skillId==0 || rows.size()>=24)
+                return false;
+            if (row.group!=3 && row.party!=0) return false;
+            rows.push_back(row);
+        }
+        return true;
+    }
+    catch (const nanodbc::database_error& err)
+    { db::utils::LogDatabaseError(err,"DBAgent::LoadGenieSkillSlots"); }
+    catch (const std::exception& err)
+    { spdlog::error("DBAgent::LoadGenieSkillSlots: {}",err.what()); }
+    return false;
+}
+
+bool CDBAgent::SaveGenieSkillSlot(const char* charId, uint8_t group, uint8_t slot,
+                                 uint32_t skillId, uint8_t party)
+{
+    if ((group==1 && (slot<1 || slot>8)) ||
+        (group==2 && (slot<1 || slot>4)) ||
+        (group==3 && (slot<1 || slot>12)) || group<1 || group>3 ||
+        (group!=3 && party!=0) || party>1 || skillId>2147483647u)
+        return false;
+    const int32_t g=group,s=slot,id=static_cast<int32_t>(skillId),p=party;
+    try
+    {
+        auto conn=db::ConnectionManager::CreatePoolConnection(modelUtil::DbType::GAME, DB_PROCESS_TIMEOUT);
+        if (!conn) return false;
+        nanodbc::statement stmt=conn->CreateStatement("EXEC dbo.GENIE_SAVE_SKILL_SLOT ?, ?, ?, ?, ?");
+        stmt.bind(0,charId);
+        stmt.bind(1,&g);
+        stmt.bind(2,&s);
+        stmt.bind(3,&id);
+        stmt.bind(4,&p);
+        stmt.execute();
+        return true;
+    }
+    catch (const nanodbc::database_error& err)
+    { db::utils::LogDatabaseError(err,"DBAgent::SaveGenieSkillSlot"); }
+    catch (const std::exception& err)
+    { spdlog::error("DBAgent::SaveGenieSkillSlot: {}",err.what()); }
+    return false;
+}
+
 } // namespace Aujard

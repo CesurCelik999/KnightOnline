@@ -557,6 +557,15 @@ public:
 	void RequestGenieDataFromAgent(); // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 	void SaveGenieDataToAgent(bool force);
 	void HandleGenieLoadResponse(const char* data, int length);
+    // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
+    uint32_t m_genieSkillIds[24] {};
+    uint8_t m_genieSkillParty[24] {};
+    bool m_genieSlotsLoaded = false;
+    void RequestGenieSkillSlots();
+    void GenieSkillSlotPacket(const char* data,int length);
+    void HandleGenieSkillSlotsResponse(const char* data,int length);
+    void HandleGenieSkillSlotSaveResult(const char* data,int length);
+    bool ValidGenieSkill(uint32_t skillId) const;
 	void SendGenieRemaining();
 	void SendGenieState(bool on);
 	uint16_t GenieHoursRemaining() const;

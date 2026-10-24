@@ -121,7 +121,13 @@ void EbenezerReadQueueThread::process_packet(const char* buffer, int len)
 		case DB_OPENKO_CUSTOM:
 			switch (const uint8_t customOpCode = GetByte(buffer, index))
 			{
-				case DB_CUSTOM_GENIE_LOAD_RESPONSE: // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
+				case DB_CUSTOM_GENIE_SLOTS_LOAD_RESPONSE: // RIFT_GENIE_SLOTS_ROUNDTRIP_V1
+                    if (pUser && len>=index) pUser->HandleGenieSkillSlotsResponse(buffer+index,len-index);
+                    break;
+                case DB_CUSTOM_GENIE_SLOT_SAVE_RESPONSE:
+                    if (pUser && len>=index) pUser->HandleGenieSkillSlotSaveResult(buffer+index,len-index);
+                    break;
+                case DB_CUSTOM_GENIE_LOAD_RESPONSE: // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 					if (pUser != nullptr && len >= index)
 						pUser->HandleGenieLoadResponse(buffer + index, len - index);
 					break;
