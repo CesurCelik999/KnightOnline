@@ -44,6 +44,9 @@ public:
 	bool m_genieLoaded = false; // OPENKO_HSACSX_GENIE_SQL_BRIDGE_V2
 	uint8_t m_genieFirstUsed = 0;
 	double m_genieLastActionTime = 0.0;
+    // RIFT_GENIE_STAGE7_PAIRED_ITEMS_V1: per-session consumable throttles.
+    double m_stage7NextPotionUseAt = 0.0;
+    double m_stage7NextScrollUseAt[12] {};
 
 	// Login -> Select Char 까지 한시적으로만 쓰는변수. 이외에는 _USER_DATA 안에있는 변수를 쓴다...agent 와의 데이터 동기화를 위해...
 	char m_strAccountID[MAX_ID_SIZE + 1] = {};

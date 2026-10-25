@@ -172,6 +172,8 @@ void CUser::Initialize()
     std::memset(m_genieSkillParty,0,sizeof(m_genieSkillParty));
 	m_genieFirstUsed = 0;
 	m_genieLastActionTime = 0.0;
+    m_stage7NextPotionUseAt = 0.0;
+    std::memset(m_stage7NextScrollUseAt,0,sizeof(m_stage7NextScrollUseAt));
 	std::memset(m_genieOptions, 0, sizeof(m_genieOptions));
 
 	m_bAbnormalType        = 1; // User starts out in normal size.
@@ -1013,8 +1015,73 @@ void CUser::GeniePacket(char* packet, int packetSize)
     {
         switch (command)
         {
-            case 1: // Genie potion/item use: not enabled without inventory transaction.
+            case 1: // RIFT_GENIE_STAGE7_PAIRED_ITEMS_V1: HP / MP potion, server authoritative
+            case 7: // RIFT_GENIE_STAGE7_PAIRED_ITEMS_V1: self-buff scroll, server authoritative
+            {
+                // Input after WIZ_GENIE: group 1, cmd 1/7, slot uint8, magicId uint32.
+                // Only the authenticated socket's own character is affected.
+                if (packetSize != 7 || !m_genieLoaded || !m_genieActive ||
+                    GenieHoursRemaining() == 0 || !m_pMain ||
+                    m_bResHpType == USER_DEAD || m_pUserData->m_sHp <= 0) return;
+                const bool potion = command == 1;
+                const uint8_t slot = static_cast<uint8_t>(packet[2]);
+                if ((potion && slot > 1) || (!potion && slot >= 12)) return;
+                if (potion && !m_genieOptions[slot == 0 ? 1 : 2]) return;
+                if (!potion && !m_genieOptions[5]) return;
+                const uint32_t magicId = uint32_t(static_cast<uint8_t>(packet[3])) |
+                    (uint32_t(static_cast<uint8_t>(packet[4])) << 8) |
+                    (uint32_t(static_cast<uint8_t>(packet[5])) << 16) |
+                    (uint32_t(static_cast<uint8_t>(packet[6])) << 24);
+                const size_t itemOfs = potion ? (slot == 0 ? 40u : 48u) : 52u + size_t(slot)*4u;
+                const uint32_t itemId = uint32_t(m_genieOptions[itemOfs]) |
+                    (uint32_t(m_genieOptions[itemOfs+1]) << 8) |
+                    (uint32_t(m_genieOptions[itemOfs+2]) << 16) |
+                    (uint32_t(m_genieOptions[itemOfs+3]) << 24);
+                if (!itemId || itemId > 0x7fffffffu || !magicId || magicId > 0x7fffffffu) return;
+                const model::Item* item = m_pMain->m_ItemTableMap.GetData(itemId);
+                const model::Magic* magic = m_pMain->m_MagicTableMap.GetData(magicId);
+                if (!item || !item->Countable || !magic || magic->UseItem != itemId ||
+                    magic->Type1 != (potion ? 3 : 4) || magic->Type2 != 0 ||
+                    magic->Skill != 0 || (magic->Moral != 1 && magic->Moral != 2)) return;
+                bool haveItem = false;
+                for (int i = SLOT_MAX; i < SLOT_MAX + HAVE_MAX; ++i)
+                    if (m_pUserData->m_sItemArray[i].nNum == itemId &&
+                        m_pUserData->m_sItemArray[i].sCount > 0) { haveItem = true; break; }
+                if (!haveItem) return;
+                const double now = TimeGet();
+                if (potion)
+                {
+                    const model::MagicType3* t3 = m_pMain->m_MagicType3TableMap.GetData(magicId);
+                    if (!t3 || t3->DirectType != (slot == 0 ? 1 : 2) ||
+                        t3->FirstDamage <= 0 || t3->TimeDamage != 0) return;
+                    const int maxValue = slot == 0 ? m_iMaxHp : m_iMaxMp;
+                    const int value = slot == 0 ? m_pUserData->m_sHp : m_pUserData->m_sMp;
+                    const uint8_t threshold = m_genieOptions[slot == 0 ? 9 : 11];
+                    if (maxValue <= 0 || value >= maxValue ||
+                        (100LL * value) > (int64_t(threshold) * maxValue) ||
+                        now < m_stage7NextPotionUseAt) return;
+                    m_stage7NextPotionUseAt = now + 1.25;
+                }
+                else
+                {
+                    const model::MagicType4* t4 = m_pMain->m_MagicType4TableMap.GetData(magicId);
+                    if (!t4 || t4->BuffType == 0 || t4->BuffType > MAX_TYPE4_BUFF ||
+                        now < m_stage7NextScrollUseAt[slot]) return;
+                    m_stage7NextScrollUseAt[slot] = now + 4.0;
+                }
+                // Do not duplicate potion or scroll effects: reuse the existing
+                // validated MAGIC_EFFECTING path. It checks class, mana, buff state,
+                // consumes UseItem through ItemCountChange, and updates HP/MP/buffs.
+                char native[32] {};
+                int pos = 0;
+                SetByte(native, MAGIC_EFFECTING, pos);
+                SetDWORD(native, magicId, pos);
+                SetShort(native, _socketId, pos);
+                SetShort(native, _socketId, pos);
+                for (int i = 0; i < 6; ++i) SetShort(native, 0, pos);
+                m_MagicProcess.MagicPacket(native);
                 return;
+            }
             case 2: // Load saved options
             {
                 if (!m_genieLoaded) return;
