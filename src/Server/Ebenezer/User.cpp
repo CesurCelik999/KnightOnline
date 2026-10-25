@@ -972,6 +972,38 @@ void CUser::GeniePacket(char* packet, int packetSize)
     const auto group = static_cast<uint8_t>(packet[0]);
     const auto command = static_cast<uint8_t>(packet[1]);
     if (group == 3) { GenieSkillSlotPacket(packet,packetSize); return; }
+    // RIFT_GENIE_STAGE7_ONLINE_V1: source-authenticated party leader NPC target.
+    // Input: WIZ_GENIE, 5, 1, int16 npc. Output: WIZ_GENIE, 5, 2, int16 npc.
+    // No movement or skill bypass: normal packet validation remains authoritative.
+    if (group == 5)
+    {
+        if (command != 1 || packetSize != 4 || !m_pMain || m_sPartyIndex < 0) return;
+        const double now = TimeGet();
+        if (now - m_stage7LeaderBroadcastAt < 0.75) return;
+        m_stage7LeaderBroadcastAt = now;
+        _PARTY_GROUP* party = m_pMain->m_PartyMap.GetData(m_sPartyIndex);
+        if (!party || party->userSocketIds[0] != _socketId) return;
+        const int16_t npcId = static_cast<int16_t>(
+            static_cast<uint8_t>(packet[2]) |
+            (uint16_t(static_cast<uint8_t>(packet[3])) << 8));
+        if (npcId >= 0)
+        {
+            CNpc* npc = m_pMain->m_NpcMap.GetData(npcId);
+            if (!npc || npc->m_sCurZone != m_pUserData->m_bZone ||
+                npc->m_tNpcType != 0 || npc->m_iHP <= 0) return;
+            const float dx = npc->m_fCurX - m_pUserData->m_curx;
+            const float dz = npc->m_fCurZ - m_pUserData->m_curz;
+            if (dx * dx + dz * dz > 2500.0f) return;
+        }
+        char out[8] {};
+        int pos = 0;
+        SetByte(out, WIZ_GENIE, pos);
+        SetByte(out, 5, pos);
+        SetByte(out, 2, pos);
+        SetShort(out, npcId, pos);
+        m_pMain->Send_PartyMember(m_sPartyIndex, out, pos);
+        return;
+    }
     if (group==4) // RIFT_GENIE_GMFX_STAGE6_V1
     {
         if (command==1 && packetSize==2) RiftSendVanitySnapshot();
