@@ -565,6 +565,7 @@ public:
     uint32_t m_genieSkillIds[24] {};
     uint8_t m_genieSkillParty[24] {};
     bool m_genieSlotsLoaded = false;
+    double m_stage7LeaderBroadcastAt = 0.0; // RIFT_GENIE_STAGE7_ONLINE_V1 rate-limit leader relay
     void RequestGenieSkillSlots();
     void GenieSkillSlotPacket(const char* data,int length);
     void HandleGenieSkillSlotsResponse(const char* data,int length);
